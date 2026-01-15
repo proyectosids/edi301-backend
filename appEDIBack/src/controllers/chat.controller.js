@@ -1,9 +1,8 @@
 const { sql, queryP } = require('../dataBase/dbConnection');
 const { ok, created, bad, fail } = require('../utils/http');
 const { Q } = require('../queries/chat.queries');
-const { enviarNotificacionMulticast } = require('../utils/firebase'); // ✅ Importamos la utilidad
+const { enviarNotificacionMulticast } = require('../utils/firebase');
 
-// 1. INICIAR CHAT PRIVADO
 exports.initPrivateChat = async (req, res) => {
     try {
         const myId = req.user.id_usuario ?? req.user.id;
@@ -33,7 +32,7 @@ exports.initPrivateChat = async (req, res) => {
     } catch (e) { fail(res, e); }
 };
 
-// 2. CREAR GRUPO
+
 exports.createGroup = async (req, res) => {
     try {
         const myId = req.user.id_usuario ?? req.user.id;
@@ -57,7 +56,7 @@ exports.createGroup = async (req, res) => {
     } catch (e) { fail(res, e); }
 };
 
-// 3. ENVIAR MENSAJE
+
 exports.sendMessage = async (req, res) => {
     try {
         const myId = req.user.id_usuario ?? req.user.id;
@@ -74,16 +73,16 @@ exports.sendMessage = async (req, res) => {
 
         ok(res, { message: 'Enviado' });
 
-        // Notificar en segundo plano
+
         _sendPushToRoom(id_sala, myId, myName, mensaje);
 
     } catch (e) { fail(res, e); }
 };
 
-// --- FUNCIÓN AUXILIAR CORREGIDA ---
+
 async function _sendPushToRoom(idSala, senderId, senderName, messageText) {
     try {
-        // 1. Buscar tokens
+
         const queryTokens = `
             SELECT u.fcm_token 
             FROM Chat_Participantes cp
@@ -103,7 +102,7 @@ async function _sendPushToRoom(idSala, senderId, senderName, messageText) {
 
         const tokens = rows.map(r => r.fcm_token);
 
-        // 👇👇 AQUÍ ESTABA EL ERROR, AHORA USAMOS LA FUNCIÓN IMPORTADA 👇👇
+
         await enviarNotificacionMulticast(
             tokens, 
             senderName, 
@@ -116,11 +115,11 @@ async function _sendPushToRoom(idSala, senderId, senderName, messageText) {
         );
         
     } catch (error) {
-        console.error("❌ Error enviando Push:", error);
+        console.error("Error enviando Push:", error);
     }
 }
 
-// 4. LISTAR MIS CHATS
+
 exports.getMyChats = async (req, res) => {
     try {
         const myId = req.user.id_usuario ?? req.user.id;
@@ -129,7 +128,6 @@ exports.getMyChats = async (req, res) => {
     } catch (e) { fail(res, e); }
 };
 
-// 5. VER MENSAJES DE UNA SALA
 exports.getMessages = async (req, res) => {
     try {
         const myId = req.user.id_usuario ?? req.user.id;

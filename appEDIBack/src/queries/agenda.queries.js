@@ -1,5 +1,5 @@
 exports.Q = {
-  // 1. MODIFICADO: Agregamos dias_anticipacion
+
   create: `
     INSERT INTO dbo.Agenda_Actividades (
         titulo, descripcion, fecha_evento, hora_evento, imagen, estado_publicacion, dias_anticipacion
@@ -49,7 +49,6 @@ exports.Q = {
 
   remove: `UPDATE dbo.Agenda_Actividades SET activo = 0, updated_at = GETDATE() WHERE id_actividad = @id_actividad`,
 
-  // ... (Tu consulta getActiveEvents) ...
   getActiveEvents: `
     SELECT 
         id_actividad as id_evento, 

@@ -6,7 +6,7 @@ const validate = require('../utils/validate');
 const { createUserSchema, updateUserSchema } = require('../models/usuario.model');
 const {authDuard} = require('../middleware/authGuard')
 
-//router.get('/', C.list);
+
 router.get('/', C.searchUsers);
 router.get('/familias/by-doc/search', F.searchByDocument);
 router.put('/update-token', C.updateToken);

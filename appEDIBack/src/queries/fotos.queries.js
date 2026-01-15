@@ -20,7 +20,5 @@ exports.Q = {
     ORDER BY created_at DESC
   `,
 
-  // Si tenías otras queries de subir foto específica, puedes dejarlas o borrarlas,
-  // pero esta es la importante para la galería.
-  create: `INSERT INTO ...` // (Opcional si usas la lógica antigua)
+  create: `INSERT INTO ...` 
 };

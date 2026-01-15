@@ -153,18 +153,19 @@ exports.Q = {
     JOIN dbo.Roles r ON r.id_rol = u.id_rol
     LEFT JOIN dbo.Miembros_Familia mf ON mf.id_usuario = u.id_usuario AND mf.activo = 1
     LEFT JOIN dbo.Familias_EDI f ON f.id_familia = mf.id_familia AND f.activo = 1
-    -- JOIN para buscar el color del estado actual (por nombre)
     LEFT JOIN dbo.Cat_Estados CE ON CE.descripcion = u.estado 
     WHERE u.id_usuario = @id_usuario
   `,
   softDelete: `UPDATE dbo.Usuarios SET activo = 0, updated_at = GETDATE() WHERE id_usuario = @id_usuario`,
-  //setToken: `UPDATE dbo.Usuarios SET fcm_token = @token, updated_at = GETDATE() WHERE id_usuario = @id_usuario`,
+
   updateSession: `UPDATE dbo.Usuarios SET session_token = @token, updated_at = GETDATE() WHERE id_usuario = @id_usuario`,
   
   updateFcm:     `UPDATE dbo.Usuarios SET fcm_token = @token, updated_at = GETDATE() WHERE id_usuario = @id_usuario`,
+
   clearToken: `UPDATE dbo.Usuarios SET session_token = NULL, updated_at = GETDATE() WHERE session_token = @token`,
+
   getTokensPadresPorFamilia: `
-    SELECT u.id_usuario, u.fcm_token AS session_token  -- <--- OJO AQUÍ: Lo apodamos 'session_token' para no cambiar todo el código del controlador
+    SELECT u.id_usuario, u.fcm_token AS session_token 
     FROM dbo.Usuarios u
     JOIN dbo.Miembros_Familia mf ON mf.id_usuario = u.id_usuario
     JOIN dbo.Roles r ON r.id_rol = u.id_rol
@@ -172,7 +173,7 @@ exports.Q = {
       AND mf.activo = 1 
       AND u.activo = 1
       AND (r.nombre_rol IN ('Padre', 'Madre', 'Tutor', 'Admin', 'PapaEDI', 'MamaEDI'))
-      AND u.fcm_token IS NOT NULL  -- <--- Ahora validamos que tenga fcm_token
+      AND u.fcm_token IS NOT NULL  
   `,
   
   createNotificacion: `

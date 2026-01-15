@@ -3,10 +3,9 @@ const { ok, created, bad, notFound, fail } = require('../utils/http');
 const { Q } = require('../queries/familias.queries');
 const MiembrosQ = require('../queries/miembros.queries').Q;
 const path = require('path');
-// 👇 1. IMPORTANTE: Importamos la notificación grupal
 const { enviarNotificacionMulticast } = require('../utils/firebase');
 
-// helper para inyectar el SELECT base con JOIN
+
 const withBase = (tpl) => tpl.replace('{{BASE}}', Q.base);
 
 exports.list = async (_req, res) => {
@@ -78,7 +77,6 @@ exports.create = async (req, res) => {
     await transaction.begin();
     const request = new sql.Request(transaction);
 
-    // 1. Insertar la familia y obtener su ID
     request.input('nombre_familia', sql.NVarChar, nombre_familia);
     request.input('residencia', sql.NVarChar, residencia);
     request.input('direccion', sql.NVarChar, direccion ?? null);
@@ -96,7 +94,6 @@ exports.create = async (req, res) => {
     }
     const id_familia = familiaResult.recordset[0].id_familia;
 
-    // 2. Insertar miembros (Padre, Madre, Hijos)
     const miembrosAIngresar = [];
     if (papa_id) miembrosAIngresar.push({ id_usuario: papa_id, tipo: 'PADRE' });
     if (mama_id) miembrosAIngresar.push({ id_usuario: mama_id, tipo: 'MADRE' });
@@ -112,16 +109,14 @@ exports.create = async (req, res) => {
       await miembroRequest.query(MiembrosQ.add); 
     }
 
-    await transaction.commit(); // ✅ Confirmamos la transacción
+    await transaction.commit(); 
 
-    // 👇 2. AQUÍ AGREGAMOS LA LÓGICA DE NOTIFICACIÓN
     try {
         const idsPadres = [];
         if (papa_id) idsPadres.push(papa_id);
         if (mama_id) idsPadres.push(mama_id);
 
         if (idsPadres.length > 0) {
-            // Buscamos los tokens de los padres usando una query directa
             const tokensResult = await queryP(`
                 SELECT fcm_token FROM dbo.Usuarios 
                 WHERE id_usuario IN (${idsPadres.join(',')}) 
@@ -143,7 +138,6 @@ exports.create = async (req, res) => {
     } catch (notifError) {
         console.error("⚠️ Error enviando notificación de familia:", notifError);
     }
-    // ----------------------------------------------------
 
     const finalRows = await queryP(withBase(Q.byId), {
       id_familia: { type: sql.Int, value: id_familia },

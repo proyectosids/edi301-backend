@@ -1,9 +1,8 @@
 const { sql, queryP } = require('../dataBase/dbConnection');
 const { ok, created, bad, fail } = require('../utils/http');
 const { Q } = require('../queries/mensajes.queries');
-const { enviarNotificacionPush } = require('../utils/firebase'); // Asegúrate de tener esto
+const { enviarNotificacionPush } = require('../utils/firebase'); 
 
-// FUNCIÓN DE CREAR MENSAJE
 exports.create = async (req, res) => {
   try {
     const { id_familia, mensaje } = req.body;
@@ -11,12 +10,10 @@ exports.create = async (req, res) => {
         return bad(res, 'No tienes permiso para escribir mensajes (Baja Temporal).');
     }
     
-    // Obtener ID del usuario del token
     const id_usuario = req.user.id_usuario ?? req.user.id ?? req.user.userId;
 
     if (!id_familia || !mensaje) return bad(res, 'Faltan datos: id_familia o mensaje');
 
-    // 1. Guardar en Base de Datos
     const result = await queryP(Q.create, {
       id_familia: { type: sql.Int, value: id_familia },
       id_usuario: { type: sql.Int, value: id_usuario },
@@ -25,7 +22,6 @@ exports.create = async (req, res) => {
     
     const nuevoMensaje = result[0];
 
-    // 2. Notificar a la familia (en segundo plano)
     _notificarFamilia(id_familia, id_usuario, mensaje);
 
     created(res, nuevoMensaje);
@@ -34,7 +30,6 @@ exports.create = async (req, res) => {
   }
 };
 
-// FUNCIÓN DE LISTAR MENSAJES
 exports.listByFamilia = async (req, res) => {
   try {
     const rows = await queryP(Q.listByFamilia, {
@@ -46,7 +41,6 @@ exports.listByFamilia = async (req, res) => {
   }
 };
 
-// HELPER: NOTIFICACIONES
 async function _notificarFamilia(idFamilia, idSender, textoMensaje) {
   try {
     const senderInfo = await queryP(`SELECT nombre FROM dbo.Usuarios WHERE id_usuario = @id`, { id: {type: sql.Int, value: idSender}});

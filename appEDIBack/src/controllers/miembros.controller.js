@@ -35,7 +35,6 @@ async function remove(req, res) {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) return bad(res, 'id inválido');
     
-    // Eliminación física (Hard Delete) para permitir reasignación
     await queryP(`DELETE FROM dbo.Miembros_Familia WHERE id_miembro = @id`,
       { id: { type: sql.Int, value: id }});
     ok(res, { message: 'Miembro eliminado permanentemente de la familia' });
@@ -43,7 +42,7 @@ async function remove(req, res) {
 }
 
 async function addBulk(req, res) {
-  // Lógica simple sin notificaciones (opcional)
+
   const transaction = new sql.Transaction(pool); 
   try {
     const { id_familia, id_usuarios } = req.body;
@@ -63,7 +62,7 @@ async function addBulk(req, res) {
   }
 }
 
-// 🔥 [CORREGIDO] Guarda en BD + Envía Push
+
 async function addAlumnosToFamilia(req, res) {
   const { id_familia } = req.params;
   const { matriculas = [] } = req.body;
@@ -100,7 +99,6 @@ async function addAlumnosToFamilia(req, res) {
         const user = userResult.recordset[0];
         const id_usuario = user.id_usuario;
 
-        // Insertar Miembro
         const reqMiembro = new sql.Request(transaction);
         reqMiembro.input('id_familia', sql.Int, id_familia);
         reqMiembro.input('id_usuario', sql.Int, id_usuario);
@@ -116,11 +114,9 @@ async function addAlumnosToFamilia(req, res) {
         
         results.added.push(matricula);
 
-        // --- 🔔 A. Notificación para el ALUMNO ---
         const tituloAlumno = 'Nueva Asignación 🏠';
         const mensajeAlumno = `Has sido asignado a la familia "${nombreFamilia}".`;
 
-        // 1. Guardar en BD (Importante para que salga en la lista)
         const reqNotifAlumno = new sql.Request(transaction);
         reqNotifAlumno.input('uid', sql.Int, id_usuario);
         reqNotifAlumno.input('tit', sql.NVarChar, tituloAlumno);
@@ -133,10 +129,8 @@ async function addAlumnosToFamilia(req, res) {
           VALUES (@uid, @tit, @msg, @type, @ref, 0, SYSDATETIME())
         `);
 
-        // 2. Enviar Push (Si tiene token)
         if (user.fcm_token) {
             try {
-                // Ejecutamos fuera de la transacción crítica o en background
                 enviarNotificacionPush(user.fcm_token, tituloAlumno, mensajeAlumno, { tipo: 'ASIGNACION', id_referencia: id_familia.toString() });
             } catch(e) { console.error("Error push alumno", e); }
         }
@@ -146,13 +140,10 @@ async function addAlumnosToFamilia(req, res) {
       }
     }
 
-    await transaction.commit(); // ✅ COMMIT DE LA TRANSACCIÓN
+    await transaction.commit(); 
 
-    // --- 🔔 B. Notificación para los PADRES ---
-    // (Esto lo hacemos después del commit para no bloquear)
     if (results.added.length > 0) {
         try {
-            // Buscamos Padres (Tokens + IDs)
             const padresResult = await queryP(`
                 SELECT u.id_usuario, u.fcm_token 
                 FROM dbo.Miembros_Familia mf
@@ -172,7 +163,6 @@ async function addAlumnosToFamilia(req, res) {
 
                 const tokensPadres = [];
 
-                // Recorremos padres para guardar en BD uno por uno
                 for (const padre of padres) {
                     await queryP(`
                         INSERT INTO dbo.Notificaciones (id_usuario, titulo, mensaje, tipo, id_referencia, leido, created_at)
@@ -190,7 +180,6 @@ async function addAlumnosToFamilia(req, res) {
                     }
                 }
 
-                // Enviar Push Masivo
                 if (tokensPadres.length > 0) {
                     const uniqueTokens = [...new Set(tokensPadres)];
                     await enviarNotificacionMulticast(

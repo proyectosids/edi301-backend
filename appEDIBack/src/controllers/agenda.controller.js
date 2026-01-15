@@ -1,7 +1,6 @@
 const { sql, queryP } = require('../dataBase/dbConnection');
 const { ok, created, bad, notFound, fail } = require('../utils/http');
 const { Q } = require('../queries/agenda.queries');
-// 👇 1. IMPORTAR LA FUNCIÓN DE NOTIFICACIONES
 const { enviarNotificacionPush } = require('../utils/firebase'); 
 
 exports.create = async (req, res) => {
@@ -24,21 +23,15 @@ exports.create = async (req, res) => {
       dias_anticipacion:  { type: sql.Int,      value: dias_anticipacion || 3 }
     });
 
-    // 2. Responder al cliente PRIMERO (para que la app no se quede cargando)
+    // 2. Responder al cliente PRIMERO
     created(res, rows[0]);
 
     // 3. ENVIAR NOTIFICACIONES (En segundo plano)
-    // Usamos un bloque try-catch independiente para que si falla no rompa la respuesta anterior
     (async () => {
         try {
-            // 👇 Usamos queryP en lugar de getConnection
             const usuarios = await queryP("SELECT fcm_token FROM dbo.Usuarios WHERE fcm_token IS NOT NULL AND activo = 1");
-            
-            // Verificamos si hay usuarios
             if (usuarios && usuarios.length > 0) {
-                console.log(`📢 Enviando notificación de evento a ${usuarios.length} usuarios...`);
-                
-                // Enviamos una por una (o podrías usar un envío masivo si tu función lo soporta)
+                console.log(`Enviando notificación de evento a ${usuarios.length} usuarios...`);
                 for (const u of usuarios) {
                     await enviarNotificacionPush(
                         u.fcm_token, 
@@ -50,12 +43,10 @@ exports.create = async (req, res) => {
             }
         } catch (notifError) {
             console.error("⚠️ Error enviando notificaciones de agenda:", notifError);
-            // No hacemos fail(res) aquí porque ya respondimos arriba
         }
     })();
 
   } catch (e) { 
-      // Este catch solo captura errores ANTES del created(res)
       console.error(e);
       if (!res.headersSent) fail(res, e); 
   }
@@ -80,7 +71,7 @@ exports.update = async (req, res) => {
         dias_anticipacion 
     } = req.body;
 
-    console.log("📝 Update ID:", id, "Estado recibido:", estado_publicacion); // Debug
+    console.log("📝 Update ID:", id, "Estado recibido:", estado_publicacion);
 
     const rows = await queryP(Q.update, {
       id_actividad:       { type: sql.Int,      value: id },
@@ -89,10 +80,7 @@ exports.update = async (req, res) => {
       fecha_evento:       { type: sql.Date,     value: fecha_evento },
       hora_evento:        { type: sql.NVarChar, value: hora_evento ?? null },
       imagen:             { type: sql.NVarChar, value: imagen ?? null },
-      
-      // Forzamos NULL si viene undefined
       estado_publicacion: { type: sql.NVarChar, value: estado_publicacion ?? null },
-      
       dias_anticipacion:  { type: sql.Int,      value: dias_anticipacion ?? null }
     });
 

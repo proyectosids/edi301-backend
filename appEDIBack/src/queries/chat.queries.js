@@ -1,29 +1,25 @@
 exports.Q = {
-  // Crea una sala nueva
   createSala: `
     INSERT INTO Chat_Salas (nombre, tipo) VALUES (@nombre, @tipo);
     SELECT SCOPE_IDENTITY() as id_sala;
   `,
 
-  // Agrega un usuario a una sala
   addParticipante: `
     INSERT INTO Chat_Participantes (id_sala, id_usuario, es_admin)
     VALUES (@id_sala, @id_usuario, @es_admin);
   `,
 
-  // Guardar mensaje
+
   sendMessage: `
     INSERT INTO Chat_Mensajes (id_sala, id_usuario, mensaje, tipo_mensaje)
     VALUES (@id_sala, @id_usuario, @mensaje, @tipo_mensaje);
   `,
 
-  // Listar mis chats (Muestra el nombre de la otra persona si es privado)
+
   getMyChats: `
     SELECT 
         s.id_sala,
         s.tipo,
-        -- Si es GRUPAL, usa el nombre de la sala. 
-        -- Si es PRIVADO, busca el nombre del OTRO participante.
         CASE 
             WHEN s.tipo = 'GRUPAL' THEN s.nombre
             ELSE (
@@ -33,7 +29,7 @@ exports.Q = {
                 WHERE cp2.id_sala = s.id_sala AND cp2.id_usuario != @id_usuario
             )
         END as titulo_chat,
-        -- Último mensaje para mostrar en la lista
+
         (SELECT TOP 1 m.mensaje FROM Chat_Mensajes m WHERE m.id_sala = s.id_sala ORDER BY m.created_at DESC) as ultimo_mensaje,
         (SELECT TOP 1 m.created_at FROM Chat_Mensajes m WHERE m.id_sala = s.id_sala ORDER BY m.created_at DESC) as fecha_ultimo
     FROM Chat_Salas s
@@ -42,7 +38,7 @@ exports.Q = {
     ORDER BY fecha_ultimo DESC
   `,
 
-  // Obtener mensajes de una sala específica
+
   getMensajes: `
     SELECT 
         m.id_mensaje,
@@ -58,7 +54,7 @@ exports.Q = {
     ORDER BY m.created_at ASC
   `,
 
-  // MAGIA: Buscar si ya existe chat privado entre dos personas
+
   findPrivateChat: `
     SELECT p1.id_sala
     FROM Chat_Participantes p1
