@@ -43,7 +43,7 @@ exports.listByFamilia = async (req, res) => {
 
 async function _notificarFamilia(idFamilia, idSender, textoMensaje) {
   try {
-    const senderInfo = await queryP(`SELECT nombre FROM dbo.Usuarios WHERE id_usuario = @id`, { id: {type: sql.Int, value: idSender}});
+    const senderInfo = await queryP(`SELECT nombre FROM EDI.Usuarios WHERE id_usuario = @id`, { id: {type: sql.Int, value: idSender}});
     const nombreSender = senderInfo[0]?.nombre || 'Alguien';
 
     const tokensRows = await queryP(Q.getFamilyTokens, {

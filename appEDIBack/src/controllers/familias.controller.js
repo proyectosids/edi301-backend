@@ -84,7 +84,7 @@ exports.create = async (req, res) => {
     request.input('mama_id', sql.Int, mama_id ?? null);
     
     const familiaResult = await request.query(`
-      INSERT INTO dbo.Familias_EDI (nombre_familia, residencia, direccion, papa_id, mama_id)
+      INSERT INTO EDI.Familias_EDI (nombre_familia, residencia, direccion, papa_id, mama_id)
       OUTPUT INSERTED.id_familia
       VALUES (@nombre_familia, @residencia, @direccion, @papa_id, @mama_id);
     `);
@@ -118,7 +118,7 @@ exports.create = async (req, res) => {
 
         if (idsPadres.length > 0) {
             const tokensResult = await queryP(`
-                SELECT fcm_token FROM dbo.Usuarios 
+                SELECT fcm_token FROM EDI.Usuarios 
                 WHERE id_usuario IN (${idsPadres.join(',')}) 
                 AND fcm_token IS NOT NULL AND LEN(fcm_token) > 10
             `);

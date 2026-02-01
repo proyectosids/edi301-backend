@@ -29,7 +29,7 @@ exports.create = async (req, res) => {
     // 3. ENVIAR NOTIFICACIONES (En segundo plano)
     (async () => {
         try {
-            const usuarios = await queryP("SELECT fcm_token FROM dbo.Usuarios WHERE fcm_token IS NOT NULL AND activo = 1");
+            const usuarios = await queryP("SELECT fcm_token FROM EDI.Usuarios WHERE fcm_token IS NOT NULL AND activo = 1");
             if (usuarios && usuarios.length > 0) {
                 console.log(`Enviando notificación de evento a ${usuarios.length} usuarios...`);
                 for (const u of usuarios) {

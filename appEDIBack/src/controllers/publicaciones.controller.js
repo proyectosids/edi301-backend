@@ -109,8 +109,8 @@ exports.setEstado = async (req, res) => {
 
     const postInfo = await queryP(`
         SELECT p.id_usuario, u.fcm_token, u.nombre 
-        FROM dbo.Publicaciones p
-        JOIN dbo.Usuarios u ON u.id_usuario = p.id_usuario
+        FROM EDI.Publicaciones p
+        JOIN EDI.Usuarios u ON u.id_usuario = p.id_usuario
         WHERE p.id_post = @id_post
     `, { id_post: { type: sql.Int, value: idPost } });
 
