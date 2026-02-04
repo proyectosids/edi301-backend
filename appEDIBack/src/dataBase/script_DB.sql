@@ -356,7 +356,7 @@ GO
 -- Insertar Usuario 1
 SET IDENTITY_INSERT [EDI].[Usuarios] ON 
 INSERT [EDI].[Usuarios] ([id_usuario], [nombre], [apellido], [correo], [contrasena], [foto_perfil], [estado], [id_rol], [session_token], [created_at], [updated_at], [activo], [tipo_usuario], [matricula], [num_empleado], [carrera], [fecha_nacimiento], [telefono], [direccion], [residencia], [fcm_token]) 
-VALUES (1, N'Aldahir Emmanuel', N'Ballina Nuñez', N'aldahir.ballina@ulv.edu.mx', N'$2b$10$mnejAF9sGeU.f2EYTELdiOmB5VF/cK2Dn1LiqoAlxqTRP4opqfB8O', NULL, N'Prácticas en la Universidad', 1, N'438d6b43-d512-4336-b334-052b8606cbd8', CAST(N'2025-10-19T16:46:04.207' AS DateTime), CAST(N'2026-01-06T10:50:27.787' AS DateTime), 1, N'ALUMNO', 221391, NULL, N'Ingeniería', CAST(N'2002-08-15' AS Date), N'5551234567', N'Nueva dirección 123', N'Externa', N'eH8m1FwUQB2qrn162omTcC:APA91bHzr82p-RipPu1dnST6gKpcS7qb_x7Yn-uIhsR-7gLK6P_J6I5TQiR9s79QgPcpg7Dbp_H5_YQ_DvtH0UaAxzOW29RlnnpJW_VzR8mNaxpXqIsmpms')
+VALUES (1, N'Aldahir Emmanuel', N'Ballina Nuñez', N'aldahir.ballina@ulv.edu.mx', N'$2b$10$mnejAF9sGeU.f2EYTELdiOmB5VF/cK2Dn1LiqoAlxqTRP4opqfB8O', NULL, N'Prácticas en la Universidad', 1, N'438d6b43-d512-4336-b334-052b8606cbd8', CAST(N'2025-10-19T16:46:04.207' AS DateTime), CAST(N'2026-01-06T10:50:27.787' AS DateTime), 1, N'ALUMNO', 221391, NULL, N'Ingeniería En Desarrollo DE Software', CAST(N'2002-08-15' AS Date), N'9613374186', N'Pueblo Nuevo Solistahuacan, Chiapas', N'Externa', N'eH8m1FwUQB2qrn162omTcC:APA91bHzr82p-RipPu1dnST6gKpcS7qb_x7Yn-uIhsR-7gLK6P_J6I5TQiR9s79QgPcpg7Dbp_H5_YQ_DvtH0UaAxzOW29RlnnpJW_VzR8mNaxpXqIsmpms')
 SET IDENTITY_INSERT [EDI].[Usuarios] OFF
 GO
 

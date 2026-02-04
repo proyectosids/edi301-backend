@@ -5,7 +5,7 @@ const { createPublicacion, setEstadoPublicacion } = require('../models/publicaci
 const authGuard = require('../middleware/authGuard'); 
 const roleGuard = require('../middleware/roleGuard');
 
-
+// 👇 MOVIDO AL PRINCIPIO: Definimos los roles ANTES de usarlos
 const ROLES_ACCESO_APP = [
   'Admin', 
   'PapaEDI', 
@@ -26,27 +26,37 @@ const ROLES_ADMIN = [
 
 
 router.get('/mis-posts', authGuard, C.listByUsuario);
+
+
 router.post('/', authGuard, roleGuard(...ROLES_ACCESO_APP), validate(createPublicacion), C.create);
+
 router.get('/feed/global', authGuard, C.listGlobal);
+
 router.get('/familia/:id_familia', authGuard, C.listByFamilia);
-router.get('/institucional', authGuard, roleGuard(...ROLES_ACCESO_APP), C.listInstitucional); 
+
+router.get('/institucional', authGuard, roleGuard(...ROLES_ACCESO_APP), C.listInstitucional);
+
 router.put(
   '/:id/estado', 
   authGuard, 
   roleGuard(...ROLES_ADMIN), 
+
   C.setEstado
 );
+
 router.delete(
   '/:id', 
   authGuard, 
   C.remove
 );
+
 router.get(
   '/familia/:id_familia/pendientes', 
   authGuard, 
   roleGuard(...ROLES_ADMIN), 
   C.listPendientes
 );
+
 router.post('/:id/like', authGuard, C.toggleLike);
 router.get('/:id/comentarios', authGuard, C.getComentarios);
 router.post('/:id/comentarios', authGuard, C.addComentario);

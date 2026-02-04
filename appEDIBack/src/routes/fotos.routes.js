@@ -5,7 +5,6 @@ const { addFoto } = require('../models/foto.model');
 const authGuard = require('../middleware/authGuard'); 
 const roleGuard = require('../middleware/roleGuard'); 
 
-
 const ROLES_FOTOS_EDIT = [
   'Admin', 
   'PapaEDI', 
@@ -14,7 +13,7 @@ const ROLES_FOTOS_EDIT = [
 
 router.post(
   '/', 
-  authGuard, 
+  authGuard,
   roleGuard(...ROLES_FOTOS_EDIT), 
   validate(addFoto), 
   C.add

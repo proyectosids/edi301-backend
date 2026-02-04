@@ -3,9 +3,9 @@ const { ok, created, bad, notFound, fail } = require('../utils/http');
 const { Q } = require('../queries/familias.queries');
 const MiembrosQ = require('../queries/miembros.queries').Q;
 const path = require('path');
+const fs = require('fs');
+const sharp = require('sharp');
 const { enviarNotificacionMulticast } = require('../utils/firebase');
-
-
 const withBase = (tpl) => tpl.replace('{{BASE}}', Q.base);
 
 exports.list = async (_req, res) => {
@@ -72,11 +72,13 @@ exports.create = async (req, res) => {
   const transaction = new sql.Transaction(pool);
   try {
     const { nombre_familia, papa_id, mama_id, residencia, direccion, hijos = [] } = req.body;
-    if (!nombre_familia || !residencia) return bad(res, 'nombre_familia y residencia requeridos');
+    
+    if (!nombre_familia || !residencia) return bad(res, 'Faltan datos obligatorios');
 
     await transaction.begin();
     const request = new sql.Request(transaction);
 
+    // Insertar Familia
     request.input('nombre_familia', sql.NVarChar, nombre_familia);
     request.input('residencia', sql.NVarChar, residencia);
     request.input('direccion', sql.NVarChar, direccion ?? null);
@@ -89,66 +91,87 @@ exports.create = async (req, res) => {
       VALUES (@nombre_familia, @residencia, @direccion, @papa_id, @mama_id);
     `);
 
-    if (!familiaResult.recordset[0] || !familiaResult.recordset[0].id_familia) {
-      throw new Error('No se pudo crear la familia o obtener el ID.');
-    }
     const id_familia = familiaResult.recordset[0].id_familia;
 
+    // Insertar Miembros
     const miembrosAIngresar = [];
-    if (papa_id) miembrosAIngresar.push({ id_usuario: papa_id, tipo: 'PADRE' });
-    if (mama_id) miembrosAIngresar.push({ id_usuario: mama_id, tipo: 'MADRE' });
-    if (hijos && hijos.length > 0) {
-      hijos.forEach(hijo_id => miembrosAIngresar.push({ id_usuario: hijo_id, tipo: 'HIJO' }));
+    if (papa_id) miembrosAIngresar.push({ id: papa_id, tipo: 'PADRE' });
+    if (mama_id) miembrosAIngresar.push({ id: mama_id, tipo: 'MADRE' });
+    if (Array.isArray(hijos)) {
+        hijos.forEach(hID => miembrosAIngresar.push({ id: hID, tipo: 'HIJO' }));
     }
 
     for (const miembro of miembrosAIngresar) {
-      const miembroRequest = new sql.Request(transaction);
-      miembroRequest.input('id_familia', sql.Int, id_familia);
-      miembroRequest.input('id_usuario', sql.Int, miembro.id_usuario);
-      miembroRequest.input('tipo_miembro', sql.NVarChar, miembro.tipo);
-      await miembroRequest.query(MiembrosQ.add); 
+      const mReq = new sql.Request(transaction);
+      mReq.input('id_familia', sql.Int, id_familia);
+      mReq.input('id_usuario', sql.Int, miembro.id);
+      mReq.input('tipo', sql.NVarChar, miembro.tipo);
+      await mReq.query(`
+        INSERT INTO EDI.Miembros_Familia (id_familia, id_usuario, tipo_miembro, activo, created_at)
+        VALUES (@id_familia, @id_usuario, @tipo, 1, SYSDATETIME())
+      `);
     }
 
     await transaction.commit(); 
 
-    try {
-        const idsPadres = [];
-        if (papa_id) idsPadres.push(papa_id);
-        if (mama_id) idsPadres.push(mama_id);
 
+    try {
+        const idsPadres = [papa_id, mama_id].filter(id => id);
         if (idsPadres.length > 0) {
-            const tokensResult = await queryP(`
-                SELECT fcm_token FROM EDI.Usuarios 
-                WHERE id_usuario IN (${idsPadres.join(',')}) 
-                AND fcm_token IS NOT NULL AND LEN(fcm_token) > 10
-            `);
-            
-            const tokens = tokensResult.map(r => r.fcm_token);
-            
-            if (tokens.length > 0) {
-                console.log(`🔔 Notificando a ${tokens.length} padres sobre nueva familia...`);
-                await enviarNotificacionMulticast(
-                    tokens,
-                    '¡Familia Creada! 🏠',
-                    `Bienvenidos a la familia "${nombre_familia}".`,
-                    { tipo: 'FAMILIA_CREADA', id_referencia: id_familia.toString() }
-                );
+            const padresData = await queryP(`SELECT id_usuario, fcm_token FROM EDI.Usuarios WHERE id_usuario IN (${idsPadres.join(',')})`);
+            const tokensPadres = [];
+
+            for (const p of padresData) {
+                await queryP(`
+                    INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
+                    VALUES (@uid, @tit, @body, @tipo, @ref, 0, GETDATE())
+                `, {
+                    uid: { type: sql.Int, value: p.id_usuario },
+                    tit: { type: sql.NVarChar, value: '¡Familia Creada! 🏠' },
+                    body: { type: sql.NVarChar, value: `Bienvenidos a la familia "${nombre_familia}".` },
+                    tipo: { type: sql.NVarChar, value: 'FAMILIA_CREADA' },
+                    ref: { type: sql.Int, value: id_familia }
+                }).catch(e => console.error("Error BD Notif Padre:", e.message));
+
+                if (p.fcm_token) tokensPadres.push(p.fcm_token);
+            }
+
+            if (tokensPadres.length > 0) {
+                enviarNotificacionMulticast(tokensPadres, '¡Familia Creada! 🏠', `Bienvenidos a la familia "${nombre_familia}".`, 
+                { tipo: 'FAMILIA_CREADA', id_familia: id_familia.toString() });
             }
         }
-    } catch (notifError) {
-        console.error("⚠️ Error enviando notificación de familia:", notifError);
-    }
 
-    const finalRows = await queryP(withBase(Q.byId), {
-      id_familia: { type: sql.Int, value: id_familia },
-    });
+        if (hijos.length > 0) {
+            const hijosData = await queryP(`SELECT id_usuario, fcm_token FROM EDI.Usuarios WHERE id_usuario IN (${hijos.join(',')})`);
+            const tokensHijos = [];
 
-    return created(res, finalRows[0]);
+            for (const h of hijosData) {
+                await queryP(`
+                    INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
+                    VALUES (@uid, @tit, @body, @tipo, @ref, 0, GETDATE())
+                `, {
+                    uid: { type: sql.Int, value: h.id_usuario },
+                    tit: { type: sql.NVarChar, value: 'Nueva Asignación 🎒' },
+                    body: { type: sql.NVarChar, value: `Has sido asignado a la familia "${nombre_familia}".` },
+                    tipo: { type: sql.NVarChar, value: 'ASIGNACION' },
+                    ref: { type: sql.Int, value: id_familia }
+                }).catch(e => console.error("Error BD Notif Hijo:", e.message));
 
+                if (h.fcm_token) tokensHijos.push(h.fcm_token);
+            }
+
+            if (tokensHijos.length > 0) {
+                enviarNotificacionMulticast(tokensHijos, 'Nueva Asignación 🎒', `Has sido asignado a la familia "${nombre_familia}".`, 
+                { tipo: 'ASIGNACION', id_familia: id_familia.toString() });
+            }
+        }
+    } catch (notifError) { console.error("Error general notificaciones:", notifError); }
+
+    const finalRows = await queryP(withBase(Q.byId), { id_familia: { type: sql.Int, value: id_familia } });
+    created(res, finalRows[0]);
   } catch (e) {
-    if (transaction.rolledBack === false) {
-      await transaction.rollback();
-    }
+    if (transaction.rolledBack === false) await transaction.rollback();
     fail(res, e);
   }
 };
@@ -240,23 +263,102 @@ exports.reporteCompleto = async (_req, res) => {
   } catch (e) { fail(res, e); }
 };
 
-const saveFile = (file, id_familia, tipo) => {
-  if (!file) return null;
-  const ext = path.extname(file.name);
-  const fileName = `familia-${id_familia}-${tipo}-${Date.now()}${ext}`;
-  const uploadDir = path.join(__dirname, '..', 'public', 'uploads');
-  const savePath = path.join(uploadDir, fileName);
-  file.mv(savePath);
-  return `/uploads/${fileName}`; 
+const UPLOAD_DIR = path.join(__dirname, '..', 'public', 'uploads');
+
+const ensureUploadDir = () => {
+  if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 };
+
+const isImageFile = (file) => {
+  if (!file) return false;
+
+  const mime = (file.mimetype || '').toLowerCase();
+  const ext = path.extname(file.name || '').toLowerCase();
+
+  const mimeOk = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'].includes(mime);
+  const extOk = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext);
+
+  if (mime === 'application/octet-stream' && extOk) return true;
+
+  return mimeOk || extOk;
+};
+
+
+const saveFile = async (file, id_familia, tipo) => {
+  if (!file) return null;
+
+  if (!isImageFile(file)) {
+  throw new Error('Archivo no permitido. Solo imágenes (jpg, jpeg, png, webp).');
+}
+
+
+  const MAX_BYTES = 5 * 1024 * 1024; // 5MB
+  if (file.size && file.size > MAX_BYTES) {
+    throw new Error('Imagen demasiado grande. Máximo 5MB.');
+  }
+
+  ensureUploadDir();
+
+  // Guardamos siempre en webp
+  const fileName = `familia-${id_familia}-${tipo}-${Date.now()}-${Math.round(Math.random() * 1e9)}.webp`;
+  const savePath = path.join(UPLOAD_DIR, fileName);
+
+  // Tamaños distintos según tipo
+  const resizeOpts =
+    tipo === 'portada'
+      ? { width: 1600, height: 900, quality: 75 }
+      : { width: 512, height: 512, quality: 75 };
+
+  if (file.tempFilePath) {
+    await sharp(file.tempFilePath)
+      .rotate()
+      .resize({
+        width: resizeOpts.width,
+        height: resizeOpts.height,
+        fit: 'inside',
+        withoutEnlargement: true
+      })
+      .webp({ quality: resizeOpts.quality })
+      .toFile(savePath);
+
+    try { fs.unlinkSync(file.tempFilePath); } catch (_) {}
+  } else {
+    await sharp(file.data)
+      .rotate()
+      .resize({
+        width: resizeOpts.width,
+        height: resizeOpts.height,
+        fit: 'inside',
+        withoutEnlargement: true
+      })
+      .webp({ quality: resizeOpts.quality })
+      .toFile(savePath);
+  }
+
+  return `/uploads/${fileName}`;
+};
+
 
 exports.uploadFotos = async (req, res) => {
   try {
     const id_familia = Number(req.params.id);
     if (!req.files) return bad(res, 'No se subió ningún archivo.');
 
-    const urlPortada = req.files.foto_portada ? saveFile(req.files.foto_portada, id_familia, 'portada') : null;
-    const urlPerfil = req.files.foto_perfil ? saveFile(req.files.foto_perfil, id_familia, 'perfil') : null;
+    let urlPortada = null;
+let urlPerfil = null;
+
+try {
+  urlPortada = req.files.foto_portada
+    ? await saveFile(req.files.foto_portada, id_familia, 'portada')
+    : null;
+
+  urlPerfil = req.files.foto_perfil
+    ? await saveFile(req.files.foto_perfil, id_familia, 'perfil')
+    : null;
+} catch (imgErr) {
+  return bad(res, imgErr.message || 'Error procesando imagen');
+}
+
 
     if (!urlPortada && !urlPerfil) return bad(res, 'No se subieron archivos válidos.');
 

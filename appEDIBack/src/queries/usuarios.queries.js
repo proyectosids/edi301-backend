@@ -148,7 +148,7 @@ exports.Q = {
       r.nombre_rol, 
       f.nombre_familia,
       f.id_familia,
-      CE.color as color_estado  -- <--- NUEVO CAMPO
+      CE.color as color_estado  
     FROM EDI.Usuarios u
     JOIN EDI.Roles r ON r.id_rol = u.id_rol
     LEFT JOIN EDI.Miembros_Familia mf ON mf.id_usuario = u.id_usuario AND mf.activo = 1
@@ -157,13 +157,9 @@ exports.Q = {
     WHERE u.id_usuario = @id_usuario
   `,
   softDelete: `UPDATE EDI.Usuarios SET activo = 0, updated_at = GETDATE() WHERE id_usuario = @id_usuario`,
-
   updateSession: `UPDATE EDI.Usuarios SET session_token = @token, updated_at = GETDATE() WHERE id_usuario = @id_usuario`,
-  
   updateFcm:     `UPDATE EDI.Usuarios SET fcm_token = @token, updated_at = GETDATE() WHERE id_usuario = @id_usuario`,
-
   clearToken: `UPDATE EDI.Usuarios SET session_token = NULL, updated_at = GETDATE() WHERE session_token = @token`,
-
   getTokensPadresPorFamilia: `
     SELECT u.id_usuario, u.fcm_token AS session_token 
     FROM EDI.Usuarios u
@@ -179,5 +175,17 @@ exports.Q = {
   createNotificacion: `
       INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia)
       VALUES (@id_usuario_destino, @titulo, @cuerpo, @tipo, @id_referencia)
-  `
+  `,
+  birthdaysToday: `
+    SELECT 
+      id_usuario, 
+      nombre, 
+      apellido, 
+      url_foto_perfil, 
+      fecha_nacimiento 
+    FROM EDI.Usuarios 
+    WHERE DAY(fecha_nacimiento) = DAY(GETDATE()) 
+    AND MONTH(fecha_nacimiento) = MONTH(GETDATE()) 
+    AND activo = 1
+  `,
 };

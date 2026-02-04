@@ -38,6 +38,7 @@ exports.login = async (req, res) => {
   }
 };
 
+
 exports.logout = async (req, res) => {
   try {
     const token = (req.headers.authorization || '').replace('Bearer ','').trim();

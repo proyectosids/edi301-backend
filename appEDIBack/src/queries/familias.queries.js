@@ -1,5 +1,4 @@
 exports.Q = {
-
   base: `
     SELECT
       f.id_familia,
@@ -13,7 +12,6 @@ exports.Q = {
       f.descripcion, 
       (p.nombre + ' ' + p.apellido) AS papa_nombre,
       (m.nombre + ' ' + m.apellido) AS mama_nombre,
-
       p.num_empleado AS papa_num_empleado,
       m.num_empleado AS mama_num_empleado
 

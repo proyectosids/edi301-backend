@@ -2,6 +2,7 @@ const { sql, queryP } = require('../dataBase/dbConnection');
 const { ok, created, bad, notFound, fail } = require('../utils/http');
 const { Q } = require('../queries/estados.queries');
 
+// Listar catálogo
 exports.getCatalog = async (req, res) => {
   try {
     const list = await queryP(Q.getCatalog);
@@ -15,12 +16,14 @@ exports.create = async (req, res) => {
     
     if (!id_usuario || !id_cat_estado) return bad(res, 'id_usuario e id_cat_estado requeridos');
 
+    // Obtener nombre del estado
     const catalogo = await queryP('SELECT descripcion FROM EDI.Cat_Estados WHERE id_cat_estado = @id', { id: { type: sql.Int, value: id_cat_estado }});
     const nombreEstado = catalogo[0]?.descripcion || 'Desconocido';
 
     if (unico_vigente) {
       await queryP(Q.closePrevActives, { id_usuario: { type: sql.Int, value: id_usuario } });
     }
+
 
     const rows = await queryP(Q.create, {
       id_usuario:   { type: sql.Int, value: id_usuario },
@@ -30,6 +33,7 @@ exports.create = async (req, res) => {
       fecha_fin:    { type: sql.DateTime, value: fecha_fin ?? null },
       activo:       { type: sql.Bit, value: 1 }
     });
+
 
     await queryP(Q.updateUserStatus, {
       id_usuario: { type: sql.Int, value: id_usuario },

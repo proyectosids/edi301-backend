@@ -1,8 +1,9 @@
 const { sql, queryP } = require('../dataBase/dbConnection');
 const { ok, created, bad, fail } = require('../utils/http');
 const { Q } = require('../queries/chat.queries');
-const { enviarNotificacionMulticast } = require('../utils/firebase');
+const { enviarNotificacionMulticast } = require('../utils/firebase'); // ✅ Importamos la utilidad
 
+// INICIAR CHAT PRIVADO
 exports.initPrivateChat = async (req, res) => {
     try {
         const myId = req.user.id_usuario ?? req.user.id;
@@ -32,7 +33,7 @@ exports.initPrivateChat = async (req, res) => {
     } catch (e) { fail(res, e); }
 };
 
-
+// CREAR GRUPO
 exports.createGroup = async (req, res) => {
     try {
         const myId = req.user.id_usuario ?? req.user.id;
@@ -56,7 +57,7 @@ exports.createGroup = async (req, res) => {
     } catch (e) { fail(res, e); }
 };
 
-
+// ENVIAR MENSAJE
 exports.sendMessage = async (req, res) => {
     try {
         const myId = req.user.id_usuario ?? req.user.id;
@@ -73,7 +74,7 @@ exports.sendMessage = async (req, res) => {
 
         ok(res, { message: 'Enviado' });
 
-
+        // Notificar en segundo plano
         _sendPushToRoom(id_sala, myId, myName, mensaje);
 
     } catch (e) { fail(res, e); }
@@ -82,11 +83,11 @@ exports.sendMessage = async (req, res) => {
 
 async function _sendPushToRoom(idSala, senderId, senderName, messageText) {
     try {
-
+        // Buscar tokens
         const queryTokens = `
             SELECT u.fcm_token 
-            FROM Chat_Participantes cp
-            JOIN Usuarios u ON u.id_usuario = cp.id_usuario
+            FROM EDI.Chat_Participantes cp
+            JOIN EDI.Usuarios u ON u.id_usuario = cp.id_usuario
             WHERE cp.id_sala = @idSala 
               AND cp.id_usuario != @senderId
               AND u.fcm_token IS NOT NULL 
@@ -102,7 +103,6 @@ async function _sendPushToRoom(idSala, senderId, senderName, messageText) {
 
         const tokens = rows.map(r => r.fcm_token);
 
-
         await enviarNotificacionMulticast(
             tokens, 
             senderName, 
@@ -115,11 +115,11 @@ async function _sendPushToRoom(idSala, senderId, senderName, messageText) {
         );
         
     } catch (error) {
-        console.error("Error enviando Push:", error);
+        console.error("❌ Error enviando Push:", error);
     }
 }
 
-
+// LISTAR MIS CHATS
 exports.getMyChats = async (req, res) => {
     try {
         const myId = req.user.id_usuario ?? req.user.id;
@@ -128,6 +128,7 @@ exports.getMyChats = async (req, res) => {
     } catch (e) { fail(res, e); }
 };
 
+// VER MENSAJES DE UNA SALA
 exports.getMessages = async (req, res) => {
     try {
         const myId = req.user.id_usuario ?? req.user.id;

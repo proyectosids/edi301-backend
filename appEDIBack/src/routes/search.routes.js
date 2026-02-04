@@ -30,7 +30,7 @@ router.get('/', async (req, res) => {
 
     res.json({ alumnos, empleados, familias });
   } catch (err) {
-    console.error('search error:', err);
+    console.error('❌ search error:', err);
     res.status(500).json({ error: 'Error interno en búsqueda' });
   }
 });

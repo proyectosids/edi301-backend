@@ -1,4 +1,6 @@
 const Joi = require('joi');
+
+// ESQUEMA DE CREACIÓN 
 const createUserSchema = Joi.object({
   nombre: Joi.string().min(1).max(100).required(),
   apellido: Joi.string().allow('', null).max(100),
@@ -7,6 +9,8 @@ const createUserSchema = Joi.object({
   foto_perfil: Joi.string().uri().allow('', null),
   tipo_usuario: Joi.string().valid('ALUMNO', 'EMPLEADO', 'EXTERNO').required(),
   id_rol: Joi.number().integer().required(),
+
+  // Lógica condicional para matrícula y num_empleado
   matricula: Joi.when('tipo_usuario', {
     is: 'ALUMNO',
     then: Joi.number().integer().required(),
@@ -23,6 +27,7 @@ const createUserSchema = Joi.object({
   fecha_nacimiento: Joi.date().iso().allow(null),
   carrera: Joi.string().allow('', null).max(120),
 }).options({ stripUnknown: true });
+
 
 const updateUserSchema = Joi.object({
   nombre: Joi.string().allow(null, ''),

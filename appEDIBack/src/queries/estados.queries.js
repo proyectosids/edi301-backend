@@ -1,4 +1,3 @@
-// src/queries/estados.queries.js
 exports.Q = {
   getCatalog: `SELECT id_cat_estado, descripcion, color FROM EDI.Cat_Estados WHERE activo = 1`,
 

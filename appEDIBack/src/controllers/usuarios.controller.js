@@ -5,6 +5,80 @@ const { ok, created, bad, fail, notFound } = require('../utils/http');
 const UQ = require('../queries/usuarios.queries').Q;
 const { Q } = require('../queries/usuarios.queries');
 const path = require('path'); 
+const fs = require('fs');
+const sharp = require('sharp');
+
+const UPLOAD_DIR = path.join(__dirname, '../public/uploads');
+
+const ensureUploadDir = () => {
+  if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+};
+
+const isImageFile = (file) => {
+  if (!file) return false;
+
+  const mime = (file.mimetype || '').toLowerCase();
+  const ext = path.extname(file.name || '').toLowerCase();
+
+  const mimeOk = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'].includes(mime);
+  const extOk = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext);
+
+  // iOS a veces manda octet-stream aunque sea imagen real
+  if (mime === 'application/octet-stream' && extOk) return true;
+
+  return mimeOk || extOk;
+};
+
+
+const saveOptimizedProfilePhoto = async (file, userId) => {
+  if (!file) return null;
+
+  if (!isImageFile(file)) {
+  throw new Error('Archivo no permitido. Solo se aceptan imágenes (jpg, jpeg, png, webp).');
+}
+
+
+  // Límite extra (además del middleware)
+  const MAX_BYTES = 5 * 1024 * 1024; // 5MB
+  if (file.size && file.size > MAX_BYTES) {
+    throw new Error('Imagen demasiado grande. Máximo 5MB.');
+  }
+
+  ensureUploadDir();
+
+  const fileName = `perfil-${userId}-${Date.now()}-${Math.round(Math.random() * 1e9)}.webp`;
+  const outPath = path.join(UPLOAD_DIR, fileName);
+
+  // Si usas express-fileupload con useTempFiles=true, existirá tempFilePath
+  if (file.tempFilePath) {
+    await sharp(file.tempFilePath)
+      .rotate()
+      .resize({
+        width: 512,
+        height: 512,
+        fit: 'inside',
+        withoutEnlargement: true
+      })
+      .webp({ quality: 75 })
+      .toFile(outPath);
+
+    try { fs.unlinkSync(file.tempFilePath); } catch (_) {}
+  } else {
+    // fallback si no existe tempFilePath
+    await sharp(file.data)
+      .rotate()
+      .resize({
+        width: 512,
+        height: 512,
+        fit: 'inside',
+        withoutEnlargement: true
+      })
+      .webp({ quality: 75 })
+      .toFile(outPath);
+  }
+
+  return `/uploads/${fileName}`;
+};
 
 exports.create = async (req, res) => {
   try {
@@ -114,28 +188,25 @@ exports.searchUsers = async (req, res) => {
   }
 };
 
-
 exports.update = async (req, res) => {
   try {
     let rutaFoto = null;
-    if (req.files && req.files.foto) {
-      const archivo = req.files.foto;
-      const extension = path.extname(archivo.name);
-      const nombreArchivo = `perfil-${req.params.id}-${Date.now()}${extension}`;
-      const uploadPath = path.join(__dirname, '../public/uploads', nombreArchivo);
-      
-      await archivo.mv(uploadPath);
-      rutaFoto = `/uploads/${nombreArchivo}`;
-    }
+if (req.files && req.files.foto) {
+  try {
+    rutaFoto = await saveOptimizedProfilePhoto(req.files.foto, req.params.id);
+  } catch (imgErr) {
+    return bad(res, imgErr.message || 'Error procesando imagen');
+  }
+}
+
+
 
     const { error, value } = updateUserSchema
       .prefs({ abortEarly: false, allowUnknown: true })
       .validate(req.body);
 
     if (error) return bad(res, 'Datos inválidos: ' + error.message);
-
     const nn = (v) => (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) ? null : v;
-
     let fechaDate = null;
     if (value.fecha_nacimiento) {
       let iso = String(value.fecha_nacimiento).trim();
@@ -146,7 +217,6 @@ exports.update = async (req, res) => {
     }
 
     const fotoFinal = rutaFoto ? rutaFoto : nn(value.foto_perfil);
-
     const params = {
       id_usuario:       { type: sql.Int,      value: Number(req.params.id) },
       nombre:           { type: sql.NVarChar, value: nn(value.nombre) },
@@ -245,4 +315,13 @@ exports.updateToken = async (req, res) => {
         console.error("Error actualizando token:", error);
         res.status(500).json({ msg: "Error interno" });
     }
+};
+
+exports.getBirthdays = async (req, res) => {
+  try {
+    const rows = await queryP(Q.birthdaysToday);
+    ok(res, rows);
+  } catch (e) {
+    fail(res, e);
+  }
 };

@@ -19,6 +19,5 @@ exports.Q = {
       AND activo = 1
     ORDER BY created_at DESC
   `,
-
   create: `INSERT INTO ...` 
 };

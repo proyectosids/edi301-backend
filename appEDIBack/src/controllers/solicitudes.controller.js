@@ -8,9 +8,11 @@ exports.create = async (req, res) => {
   try {
     const { id_familia, id_usuario, tipo_solicitud } = req.body;
     
+
     if (!id_familia || !id_usuario || !tipo_solicitud) {
         return bad(res, 'Campos requeridos: id_familia, id_usuario, tipo_solicitud');
     }
+
 
     const rows = await queryP(Q.create, {
       id_familia:     { type: sql.Int, value: id_familia },
@@ -23,14 +25,13 @@ exports.create = async (req, res) => {
     if (nuevaSolicitud) {
         try {
             const pool = await getConnection();
-
             const padresResult = await pool.request()
                 .input('id_familia', sql.Int, id_familia)
                 .query(QU.getTokensPadresPorFamilia);
 
             const padres = padresResult.recordset;
 
-            console.log(`Se encontraron ${padres.length} padres para notificar.`);
+            console.log(`👨‍👩‍👧 Se encontraron ${padres.length} padres para notificar.`);
 
             for (const padre of padres) {
                 await pool.request()
@@ -38,9 +39,9 @@ exports.create = async (req, res) => {
                     .input('titulo', sql.NVarChar, 'Nueva Solicitud')
                     .input('cuerpo', sql.NVarChar, 'Un miembro de tu familia solicita aprobación.')
                     .input('tipo', sql.NVarChar, 'SOLICITUD')
-                    .input('id_referencia', sql.Int, nuevaSolicitud.id_solicitud)
+                    .input('id_referencia', sql.Int, nuevaSolicitud.id_solicitud) 
                     .query(QU.createNotificacion);
-console.log("🧐 TOKEN A ENVIAR:", padre.session_token);
+console.log("TOKEN A ENVIAR:", padre.session_token);
                 if (padre.session_token) {
                      await enviarNotificacionPush(
                         padre.session_token,
@@ -54,10 +55,9 @@ console.log("🧐 TOKEN A ENVIAR:", padre.session_token);
                 }
             }
         } catch (notifError) {
-            console.error("⚠️ Error enviando notificaciones (La solicitud sí se creó):", notifError);
+            console.error("Error enviando notificaciones (La solicitud sí se creó):", notifError);
         }
     }
-
     created(res, nuevaSolicitud);
 
   } catch (e) { fail(res, e); }

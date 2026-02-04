@@ -5,7 +5,7 @@ const { addMiembro, addMiembrosBulk } = require('../models/miembro.model');
 const auth = require('../middleware/authGuard');
 const allow = require('../middleware/roleGuard');
 
-// crear un solo miembro
+// Ruta para crear un solo miembro
 router.post('/',
   auth,
   allow('Admin'),
@@ -13,21 +13,21 @@ router.post('/',
   C.add
 );
 
-// asignar múltiples alumnos
+// Ruta para asignar múltiples alumnos (esta es la que usa el frontend)
 router.post('/bulk',
   auth,
   allow('Admin'),
   validate(addMiembrosBulk),
   C.addBulk
 );
-// eliminar un miembro por su ID de relación
+// Ruta para eliminar
 router.delete('/:id',
   auth,
   allow('Admin'),
   C.remove
 );
 
-// listar miembros de una familia
+// Ruta para listar miembros de una familia
 router.get('/familia/:id', C.byFamilia);
 
 module.exports = router;

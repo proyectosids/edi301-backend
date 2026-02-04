@@ -10,19 +10,17 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cors());
-
 app.use(fileUpload({
   createParentPath: true,
   useTempFiles: true,
-  tempFileDir: '/tmp/'
+  tempFileDir: '/tmp/',
+  limits: { fileSize: 5 * 1024 * 1024 }, 
+  abortOnLimit: true
 }));
 
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
-
 app.use(express.static(path.join(__dirname, 'public')));
-
 app.use('/api', routes);
-
 app.get('/', (_req, res) => {
   res.json({
     message: 'Bienvenido a la API de EDI 301',

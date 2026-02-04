@@ -1,5 +1,4 @@
 exports.Q = {
-
   create: `
     INSERT INTO EDI.Agenda_Actividades (
         titulo, descripcion, fecha_evento, hora_evento, imagen, estado_publicacion, dias_anticipacion
@@ -35,20 +34,14 @@ exports.Q = {
       descripcion        = ISNULL(NULLIF(@descripcion, ''), descripcion),
       fecha_evento       = ISNULL(@fecha_evento, fecha_evento),
       hora_evento        = @hora_evento,
-      imagen             = @imagen,
-      
-      estado_publicacion = CASE 
-                              WHEN @estado_publicacion IS NULL OR LEN(@estado_publicacion) = 0 THEN estado_publicacion 
-                              ELSE @estado_publicacion 
-                           END,
-
+      imagen             = ISNULL(@imagen, imagen), 
+      estado_publicacion = ISNULL(@estado_publicacion, estado_publicacion),
       dias_anticipacion  = ISNULL(@dias_anticipacion, dias_anticipacion),
       updated_at         = GETDATE()
     OUTPUT INSERTED.* WHERE id_actividad = @id_actividad
   `,
 
   remove: `UPDATE EDI.Agenda_Actividades SET activo = 0, updated_at = GETDATE() WHERE id_actividad = @id_actividad`,
-
   getActiveEvents: `
     SELECT 
         id_actividad as id_evento, 
@@ -57,6 +50,7 @@ exports.Q = {
         fecha_evento,
         CONVERT(varchar(5), hora_evento, 108) AS hora_evento,
         dias_anticipacion,
+        imagen,  
         'EVENTO' as tipo,       
         'Admin' as nombre_rol,
         'Administración' as nombre,

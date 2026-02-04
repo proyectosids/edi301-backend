@@ -3,14 +3,18 @@ const C = require('../controllers/agenda.controller');
 const auth = require('../middleware/authGuard'); 
 const allow = require('../middleware/roleGuard');
 
+// Modificar la agenda
+const ROLES_ADMIN = ['Admin']; 
 
-const ROLES_ADMIN = ['Admin', 'PapaEDI', 'MamaEDI']; 
-
+// Listar
 router.get('/', auth, C.list);
+
 // Crear
 router.post('/', auth, allow(...ROLES_ADMIN), C.create);
+
 // Editar
 router.put('/:id', auth, allow(...ROLES_ADMIN), C.update);
+
 // Eliminar
 router.delete('/:id', auth, allow(...ROLES_ADMIN), C.remove);
 

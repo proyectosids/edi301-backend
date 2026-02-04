@@ -13,6 +13,7 @@ module.exports = (schema) => (req, res, next) => {
   if (error) {
     return res.status(400).json({ error: error.message });
   }
+
   if (value !== undefined) {
     if (req.method === 'GET') req.query = value;
     else if (req.method === 'DELETE') req.params = value;
