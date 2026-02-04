@@ -1,4 +1,21 @@
-node_modules
+# dependencies
+node_modules/
+
+
+# env
 .env
-src/public/uploads
+.env.*
+
+# secrets
 serviceAccountKey.json
+config/*.json
+*.pem
+*.key
+
+# logs
+logs/
+*.log
+
+# serviceAccountKey.json
+# .env
+# config/*.json
