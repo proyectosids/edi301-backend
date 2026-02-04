@@ -9,7 +9,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   initCronJobs();
   try {
     await queryP('SELECT 1 AS up');
-    
+
     console.log(`API EDI-301 lista en puerto ${PORT} (Accesible desde red)`);
 
     if (process.env.BYPASS_AUTH === '1') {
