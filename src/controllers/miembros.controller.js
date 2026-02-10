@@ -34,20 +34,65 @@ async function remove(req, res) {
 }
 
 async function addBulk(req, res) {
-  // Lógica simple sin notificaciones (opcional)
   const transaction = new sql.Transaction(pool); 
   try {
     const { id_familia, id_usuarios } = req.body;
+    const familiaRes = await queryP('SELECT nombre_familia FROM EDI.Familias_EDI WHERE id_familia = @id', { 
+        id: { type: sql.Int, value: id_familia } 
+    });
+    const nombreFamilia = familiaRes[0]?.nombre_familia || 'Familia';
+
     await transaction.begin();
     for (const id_usuario of id_usuarios) {
       const request = new sql.Request(transaction);
       request.input('id_familia', sql.Int, id_familia);
       request.input('id_usuario', sql.Int, id_usuario);
       request.input('tipo_miembro', sql.NVarChar, 'ALUMNO_ASIGNADO');
-      await request.query(`INSERT INTO EDI.Miembros_Familia (id_familia, id_usuario, tipo_miembro) VALUES (@id_familia, @id_usuario, @tipo_miembro)`);
+      
+      await request.query(`
+        INSERT INTO EDI.Miembros_Familia (id_familia, id_usuario, tipo_miembro, activo, created_at) 
+        VALUES (@id_familia, @id_usuario, @tipo_miembro, 1, SYSDATETIME())
+      `);
     }
+
     await transaction.commit();
+    try {
+        const ids = id_usuarios.map(id => Number(id)).filter(id => !isNaN(id));
+        
+        if (ids.length > 0) {
+            const usersData = await queryP(`SELECT id_usuario, fcm_token FROM EDI.Usuarios WHERE id_usuario IN (${ids.join(',')})`);
+            const tokensDestino = [];
+
+            for (const u of usersData) {
+                await queryP(`
+                    INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
+                    VALUES (@uid, @tit, @body, @tipo, @ref, 0, GETDATE())
+                `, {
+                    uid: { type: sql.Int, value: u.id_usuario },
+                    tit: { type: sql.NVarChar, value: 'Nueva Asignación 🎒' },
+                    body: { type: sql.NVarChar, value: `Has sido asignado a la familia "${nombreFamilia}".` },
+                    tipo: { type: sql.NVarChar, value: 'ASIGNACION' },
+                    ref: { type: sql.Int, value: id_familia }
+                }).catch(e => console.error("Error guardando notificación en BD:", e.message));
+                if (u.fcm_token) {
+                    tokensDestino.push(u.fcm_token);
+                }
+            }
+            if (tokensDestino.length > 0) {
+                enviarNotificacionMulticast(
+                    tokensDestino, 
+                    'Nueva Asignación 🎒', 
+                    `Has sido asignado a la familia "${nombreFamilia}".`, 
+                    { tipo: 'ASIGNACION', id_familia: id_familia.toString() }
+                );
+            }
+        }
+    } catch (notifError) {
+        console.error("Error en el proceso de notificaciones (addBulk):", notifError);
+    }
+
     ok(res, { message: `${id_usuarios.length} miembro(s) agregado(s) con éxito.` });
+
   } catch (e) {
     if (transaction.rolledBack === false) await transaction.rollback();
     fail(res, e);
