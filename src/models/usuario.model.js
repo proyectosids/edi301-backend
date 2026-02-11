@@ -4,7 +4,11 @@ const Joi = require('joi');
 const createUserSchema = Joi.object({
   nombre: Joi.string().min(1).max(100).required(),
   apellido: Joi.string().allow('', null).max(100),
-  correo: Joi.string().email().required().regex(/@ulv\.edu\.mx$/).message('El correo debe ser institucional (@ulv.edu.mx)'),
+correo: Joi.string().email().required().when('tipo_usuario', {
+    is: 'EXTERNO',
+    then: Joi.string(), 
+    otherwise: Joi.string().regex(/@ulv\.edu\.mx$/).message('El correo debe ser institucional (@ulv.edu.mx) para Alumnos y Empleados')
+  }),
   contrasena: Joi.string().min(6).required(),
   foto_perfil: Joi.string().uri().allow('', null),
   tipo_usuario: Joi.string().valid('ALUMNO', 'EMPLEADO', 'EXTERNO').required(),

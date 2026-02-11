@@ -144,7 +144,7 @@ exports.searchUsers = async (req, res) => {
     const tipo = (req.query.tipo || '').toUpperCase();
     const q = (req.query.q || '').trim();
 
-    if (!['ALUMNO', 'EMPLEADO'].includes(tipo)) {
+    if (!['ALUMNO', 'EMPLEADO','EXTERNO'].includes(tipo)) {
       return res.json([]);
     }
 
