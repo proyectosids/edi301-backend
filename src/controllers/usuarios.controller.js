@@ -1,143 +1,116 @@
-const { sql, queryP, getConnection } = require('../dataBase/dbConnection');
+const { sql, queryP } = require('../dataBase/dbConnection');
 const { createUserSchema, updateUserSchema } = require('../models/usuario.model');
 const { hashPassword } = require('../utils/hash');
 const { ok, created, bad, fail, notFound } = require('../utils/http');
 const UQ = require('../queries/usuarios.queries').Q;
-const { Q } = require('../queries/usuarios.queries');
 const path = require('path'); 
 const fs = require('fs');
 const sharp = require('sharp');
 
-const UPLOAD_DIR = path.join(__dirname, '../public/uploads');
 
+const UPLOAD_DIR = path.join(__dirname, '../public/uploads');
 const ensureUploadDir = () => {
   if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 };
 
-const isImageFile = (file) => {
-  if (!file) return false;
-
-  const mime = (file.mimetype || '').toLowerCase();
-  const ext = path.extname(file.name || '').toLowerCase();
-
-  const mimeOk = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'].includes(mime);
-  const extOk = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext);
-
-  // iOS a veces manda octet-stream aunque sea imagen real
-  if (mime === 'application/octet-stream' && extOk) return true;
-
-  return mimeOk || extOk;
-};
 
 
-const saveOptimizedProfilePhoto = async (file, userId) => {
-  if (!file) return null;
-
-  if (!isImageFile(file)) {
-  throw new Error('Archivo no permitido. Solo se aceptan imágenes (jpg, jpeg, png, webp).');
-}
-
-
-  // Límite extra (además del middleware)
-  const MAX_BYTES = 5 * 1024 * 1024; // 5MB
-  if (file.size && file.size > MAX_BYTES) {
-    throw new Error('Imagen demasiado grande. Máximo 5MB.');
-  }
-
-  ensureUploadDir();
-
-  const fileName = `perfil-${userId}-${Date.now()}-${Math.round(Math.random() * 1e9)}.webp`;
-  const outPath = path.join(UPLOAD_DIR, fileName);
-
-  // Si usas express-fileupload con useTempFiles=true, existirá tempFilePath
-  if (file.tempFilePath) {
-    await sharp(file.tempFilePath)
-      .rotate()
-      .resize({
-        width: 512,
-        height: 512,
-        fit: 'inside',
-        withoutEnlargement: true
-      })
-      .webp({ quality: 75 })
-      .toFile(outPath);
-
-    try { fs.unlinkSync(file.tempFilePath); } catch (_) {}
-  } else {
-    // fallback si no existe tempFilePath
-    await sharp(file.data)
-      .rotate()
-      .resize({
-        width: 512,
-        height: 512,
-        fit: 'inside',
-        withoutEnlargement: true
-      })
-      .webp({ quality: 75 })
-      .toFile(outPath);
-  }
-
-  return `/uploads/${fileName}`;
-};
 
 exports.create = async (req, res) => {
+
+  let responded = false;
+
   try {
+
     const { error, value } = createUserSchema.validate(req.body);
-    if (error) return bad(res, 'Datos inválidos');
+    if (error) return bad(res, 'Datos inválidos: ' + error.message);
+
 
     const hashed = await hashPassword(value.contrasena);
 
     const params = {
-      nombre:         { type: sql.NVarChar, value: value.nombre },
-      apellido:       { type: sql.NVarChar, value: value.apellido ?? null },
-      correo:         { type: sql.NVarChar, value: value.correo },
-      contrasena:     { type: sql.NVarChar, value: hashed },
-      foto_perfil:    { type: sql.NVarChar, value: value.foto_perfil ?? null },
-      tipo_usuario:   { type: sql.NVarChar, value: value.tipo_usuario },
-      matricula:      { type: sql.Int,      value: value.matricula ?? null },
-      num_empleado:   { type: sql.Int,      value: value.num_empleado ?? null },
-      id_rol:         { type: sql.Int,      value: value.id_rol },
-      telefono:       { type: sql.NVarChar, value: value.telefono ?? null },
-      residencia:     { type: sql.NVarChar, value: value.residencia ?? null },
-      direccion:      { type: sql.NVarChar, value: value.direccion ?? null },
-      fecha_nacimiento:{ type: sql.Date,    value: value.fecha_nacimiento ?? null },
-      carrera:        { type: sql.NVarChar, value: value.carrera ?? null },
+      nombre:          { type: sql.NVarChar, value: value.nombre },
+      apellido:        { type: sql.NVarChar, value: value.apellido ?? null },
+      correo:          { type: sql.NVarChar, value: value.correo },
+      contrasena:      { type: sql.NVarChar, value: hashed },
+      foto_perfil:     { type: sql.NVarChar, value: value.foto_perfil ?? null },
+      tipo_usuario:    { type: sql.NVarChar, value: value.tipo_usuario },
+      matricula:       { type: sql.Int,      value: value.matricula ?? null },
+      num_empleado:    { type: sql.Int,      value: value.num_empleado ?? null },
+      id_rol:          { type: sql.Int,      value: value.id_rol },
+      telefono:        { type: sql.NVarChar, value: value.telefono ?? null },
+      residencia:      { type: sql.NVarChar, value: value.residencia ?? null },
+      direccion:       { type: sql.NVarChar, value: value.direccion ?? null },
+      fecha_nacimiento:{ type: sql.Date,     value: value.fecha_nacimiento ?? null },
+      carrera:         { type: sql.NVarChar, value: value.carrera ?? null },
     };
 
+
     const rows = await queryP(UQ.insert, params);
+    
+    if (!rows || rows.length === 0) {
+        responded = true;
+        return fail(res, 'La base de datos no devolvió el usuario creado.');
+    }
+
     const user = rows[0]; 
     delete user.contrasena;
 
-    try {
-        const newUserId = user.id_usuario || user.IdUsuario; 
-        if (newUserId) {
-            const autoChatQuery = `
-                DECLARE @RoleName nvarchar(50) = (SELECT nombre_rol FROM EDI.Roles WHERE id_rol = @idRol);
-                IF @RoleName IN ('Padre', 'Madre', 'Tutor', 'PapaEDI', 'MamaEDI')
-                BEGIN
-                    DECLARE @IdSala int = (SELECT TOP 1 id_sala FROM EDI.Chat_Salas WHERE nombre = 'Comunidad de Padres');
-                    IF @IdSala IS NOT NULL
-                    BEGIN
-                        INSERT INTO EDI.Chat_Participantes (id_sala, id_usuario, es_admin)
-                        VALUES (@IdSala, @idUsuario, 0); 
-                    END
-                END
-            `;
-            await queryP(autoChatQuery, {
-                idRol: { type: sql.Int, value: value.id_rol },
-                idUsuario: { type: sql.Int, value: newUserId }
+
+    const newUserId = user.id_usuario || user.IdUsuario || user.idUsuario; 
+
+
+    responded = true;
+    created(res, user);
+
+
+    if (newUserId) {
+
+        setImmediate(() => {
+            integrateUserToChat(newUserId, value.id_rol).catch(err => {
+                console.error(" Error silencioso en chat:", err.message);
             });
-            console.log(`Verificación de chat completada para usuario ${newUserId}`);
-        }
-    } catch (chatError) {
-        console.error("Error agregando usuario al chat automático:", chatError);
+        });
     }
 
-    created(res, user);
   } catch (e) {
-    fail(res, e);
+    console.error(" Error en exports.create:", e);
+    
+
+    if (responded) return;
+
+    if (e.number === 2627 || e.message.includes('UNIQUE KEY')) {
+        return bad(res, 'El correo ya está registrado.');
+    }
+    return fail(res, e);
   }
 };
+
+
+async function integrateUserToChat(userId, idRol) {
+    const autoChatQuery = `
+        DECLARE @RoleName nvarchar(50) = (SELECT nombre_rol FROM EDI.Roles WHERE id_rol = @idRol);
+        IF @RoleName IN ('Padre', 'Madre', 'Tutor', 'PapaEDI', 'MamaEDI')
+        BEGIN
+            DECLARE @IdSala int = (SELECT TOP 1 id_sala FROM EDI.Chat_Salas WHERE nombre = 'Comunidad de Padres');
+            IF @IdSala IS NOT NULL
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM EDI.Chat_Participantes WHERE id_sala = @IdSala AND id_usuario = @idUsuario)
+                BEGIN
+                    INSERT INTO EDI.Chat_Participantes (id_sala, id_usuario, es_admin)
+                    VALUES (@IdSala, @idUsuario, 0); 
+                END
+            END
+        END
+    `;
+    await queryP(autoChatQuery, {
+        idRol: { type: sql.Int, value: idRol },
+        idUsuario: { type: sql.Int, value: userId }
+    });
+    console.log(`[BACKEND SUCCESS] Usuario ${userId} verificado en comunidad de padres.`);
+}
+
+
 
 exports.searchUsers = async (req, res) => {
   try {
