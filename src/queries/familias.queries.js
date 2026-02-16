@@ -97,5 +97,31 @@ exports.Q = {
   WHERE id_familia = @id_familia AND activo = 1
 `,
   updateFotoPerfil: "UPDATE familias SET foto_perfil = ? WHERE id = ?",
-  updateFotoPortada: "UPDATE familias SET foto_portada = ? WHERE id = ?"
+  updateFotoPortada: "UPDATE familias SET foto_portada = ? WHERE id = ?",
+
+listAvailable: `
+  SELECT 
+    f.id_familia,
+    f.nombre_familia,
+    f.foto_portada_url AS portada,
+    f.residencia,
+    (SELECT COUNT(*) FROM EDI.Miembros_Familia mf 
+     JOIN EDI.Usuarios u ON mf.id_usuario = u.id_usuario
+     JOIN EDI.Roles r ON u.id_rol = r.id_rol
+     WHERE mf.id_familia = f.id_familia 
+       AND r.nombre_rol NOT IN ('Padre', 'Madre', 'Tutor', 'PapaEDI', 'MamaEDI')
+       AND mf.activo = 1) as num_alumnos,
+    ISNULL((
+      SELECT u.nombre + ' ' + u.apellido + ' & '
+      FROM EDI.Usuarios u
+      JOIN EDI.Miembros_Familia mf ON u.id_usuario = mf.id_usuario
+      JOIN EDI.Roles r ON u.id_rol = r.id_rol
+      WHERE mf.id_familia = f.id_familia 
+        AND r.nombre_rol IN ('Padre', 'Madre', 'Tutor', 'PapaEDI', 'MamaEDI')
+      FOR XML PATH('')
+    ), 'Sin padres asignados') as padres
+  FROM EDI.Familias_EDI f
+  WHERE f.activo = 1
+  ORDER BY num_alumnos ASC
+`
 };

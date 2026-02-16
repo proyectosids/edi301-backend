@@ -405,4 +405,22 @@ exports.updateDescripcion = async (req, res) => {
     console.error('updateDescripcion error:', e);
     fail(res, e);
   }
+
+  };
+
+  // src/controllers/familias.controller.js
+exports.listAvailable = async (req, res) => {
+  try {
+    const rows = await queryP(Q.listAvailable);
+
+    const formatted = rows.map(f => ({
+      ...f,
+      // Verificamos que f.padres exista antes de hacer el slice
+      padres: (f.padres && f.padres.endsWith(' & ')) ? f.padres.slice(0, -3) : (f.padres || 'Sin padres')
+    }));
+    ok(res, formatted);
+  } catch (e) {
+    console.error('Error en listAvailable:', e); // Esto te dirá exactamente qué falla
+    fail(res, e);
+  }
 };
