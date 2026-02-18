@@ -8,7 +8,8 @@ exports.Q = {
       mf.*, 
       u.nombre, u.apellido, u.tipo_usuario, 
       u.matricula, u.num_empleado,
-      u.fecha_nacimiento, u.telefono, u.carrera 
+      u.fecha_nacimiento, u.telefono, u.carrera,
+      u.foto_perfil AS foto_perfil_url
     FROM EDI.Miembros_Familia mf
     JOIN EDI.Usuarios u ON u.id_usuario = mf.id_usuario
     WHERE mf.id_familia = @id_familia AND mf.activo = 1
