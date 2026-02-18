@@ -37,4 +37,25 @@ async function saveOptimizedImage(file, { prefix = 'img', maxW = 1280, maxH = 12
   return `/uploads/${fileName}`;
 }
 
-module.exports = { saveOptimizedImage };
+async function saveOptimizedProfilePhoto(file, userId) {
+  if (!file) return null;
+  ensureUploadDir();
+
+  // Forzamos formato .webp para ahorrar espacio y estandarizar
+  const fileName = `perfil-${userId}-${Date.now()}.webp`;
+  const outPath = path.join(UPLOAD_DIR, fileName);
+
+  await sharp(file.tempFilePath || file.data)
+    .rotate()
+    .resize(512, 512, { fit: 'cover' }) // Tamaño estándar para perfiles
+    .webp({ quality: 80 })
+    .toFile(outPath);
+
+  if (file.tempFilePath) {
+    try { fs.unlinkSync(file.tempFilePath); } catch (_) {}
+  }
+
+  return `/uploads/${fileName}`;
+}
+
+module.exports = { saveOptimizedImage, saveOptimizedProfilePhoto };

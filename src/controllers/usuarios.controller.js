@@ -6,6 +6,7 @@ const UQ = require('../queries/usuarios.queries').Q;
 const path = require('path'); 
 const fs = require('fs');
 const sharp = require('sharp');
+const { saveOptimizedProfilePhoto } = require('../utils/imageStorage');
 
 
 const UPLOAD_DIR = path.join(__dirname, '../public/uploads');
