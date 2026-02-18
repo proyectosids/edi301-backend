@@ -105,6 +105,7 @@ listAvailable: `
     f.nombre_familia,
     f.foto_portada_url AS portada,
     f.residencia,
+    f.descripcion,
     (SELECT COUNT(*) FROM EDI.Miembros_Familia mf 
      JOIN EDI.Usuarios u ON mf.id_usuario = u.id_usuario
      JOIN EDI.Roles r ON u.id_rol = r.id_rol
