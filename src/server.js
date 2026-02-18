@@ -1,22 +1,35 @@
-require('dotenv').config();
+// src/server.js
+require('dotenv').config(); 
 const app = require('./app');
-const { queryP } = require('./dataBase/dbConnection');
-const { initCronJobs } = require('./services/birthday.service');
+const http = require('http');
+const { Server } = require('socket.io');
+
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*", 
+    methods: ["GET", "POST"]
+  }
+});
+
+
+app.set('socketio', io);
+
+io.on('connection', (socket) => {
+  console.log('Usuario conectado:', socket.id);
+
+
+  socket.on('join_room', (roomId) => {
+    socket.join(roomId);
+    console.log(`Socket ${socket.id} se unió a la sala: ${roomId}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log('Usuario desconectado');
+  });
+});
 
 const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, '0.0.0.0', async () => {
-  initCronJobs();
-  try {
-    await queryP('SELECT 1 AS up');
-
-    console.log(`API EDI-301 lista en puerto ${PORT} (Accesible desde red)`);
-
-    if (process.env.BYPASS_AUTH === '1') {
-      console.warn('AUTH DESACTIVADA TEMPORALMENTE (BYPASS_AUTH=1)');
-    }
-
-  } catch (e) {
-    console.error('Error al conectar a SQL Server:', e.message);
-  }
+server.listen(PORT, () => {
+  console.log(`Servidor con Sockets corriendo en el puerto ${PORT}`);
 });

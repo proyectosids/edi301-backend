@@ -7,18 +7,19 @@ const { enviarNotificacionPush } = require("../utils/firebase");
 exports.create = async (req, res) => {
   try {
     const { id_familia, mensaje } = req.body;
+    
+    // 1. Validaciones
     if (req.user.nombre_estado === "Baja Temporal") {
-      return bad(
-        res,
-        "No tienes permiso para escribir mensajes (Baja Temporal)."
-      );
+      return bad(res, "No tienes permiso para escribir mensajes (Baja Temporal).");
     }
 
     const id_usuario = req.user.id_usuario ?? req.user.id ?? req.user.userId;
 
-    if (!id_familia || !mensaje)
+    if (!id_familia || !mensaje) {
       return bad(res, "Faltan datos: id_familia o mensaje");
+    }
 
+    // 2. Inserción en Base de Datos
     const result = await queryP(Q.create, {
       id_familia: { type: sql.Int, value: id_familia },
       id_usuario: { type: sql.Int, value: id_usuario },
@@ -27,11 +28,22 @@ exports.create = async (req, res) => {
 
     const nuevoMensaje = result[0];
 
+    // 3. EMISIÓN EN TIEMPO REAL (Socket.io)
+    const io = req.app.get('socketio');
+    if (io) {
+      // Emitimos a la sala de la familia
+      io.to(id_familia.toString()).emit('nuevo_mensaje', nuevoMensaje);
+    }
+
+    // 4. Notificación Push (Segundo plano)
     _notificarFamilia(id_familia, id_usuario, mensaje);
 
-    created(res, nuevoMensaje);
+    // 5. RESPUESTA ÚNICA AL CLIENTE
+    // Usamos tu utilidad 'created' que ya maneja el status 201 y el JSON
+    return created(res, nuevoMensaje);
+
   } catch (e) {
-    fail(res, e);
+    return fail(res, e);
   }
 };
 

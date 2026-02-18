@@ -1,3 +1,4 @@
+require('dotenv').config(); 
 const express = require('express');
 const cors = require('cors');
 const path = require('path'); 
@@ -17,6 +18,12 @@ app.use(fileUpload({
   limits: { fileSize: 5 * 1024 * 1024 }, 
   abortOnLimit: true
 }));
+
+// Antes de las rutas
+app.use((req, res, next) => {
+  req.io = app.get('socketio');
+  next();
+});
 
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
 app.use(express.static(path.join(__dirname, 'public')));
