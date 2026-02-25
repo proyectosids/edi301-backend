@@ -20,9 +20,18 @@ io.on('connection', (socket) => {
 
 
   socket.on('join_room', (roomId) => {
-    socket.join(roomId);
-    console.log(`Socket ${socket.id} se unió a la sala: ${roomId}`);
-  });
+  socket.join(roomId);
+  console.log(`[join_room] socket=${socket.id} room=${roomId}`);
+
+  // ✅ ACK al cliente (para que sepamos que sí se unió)
+  socket.emit('joined_room', { roomId, socketId: socket.id });
+});
+
+  socket.on('leave_room', (roomId) => {
+  socket.leave(roomId);
+  console.log(`[leave_room] socket=${socket.id} room=${roomId}`);
+  socket.emit('left_room', { roomId, socketId: socket.id });
+});
 
   socket.on('disconnect', () => {
     console.log('Usuario desconectado');

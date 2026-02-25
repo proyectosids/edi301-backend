@@ -11,6 +11,16 @@ exports.add = async (req, res) => {
       id_post:  { type: sql.Int, value: id_post },
       url_foto: { type: sql.NVarChar, value: url_foto }
     });
+    // ✅ Tiempo real: avisar a la familia dueña del post
+    const info = await queryP(
+      'SELECT id_familia FROM EDI.Publicaciones WHERE id_post = @id_post',
+      { id_post: { type: sql.Int, value: Number(id_post) } }
+    );
+    const id_familia = info?.[0]?.id_familia;
+    if (id_familia) {
+      req.io?.to(`familia_${id_familia}`).emit('foto_agregada', rows[0]);
+    }
+
     created(res, rows[0]);
   } catch (e) { fail(res, e); }
 };

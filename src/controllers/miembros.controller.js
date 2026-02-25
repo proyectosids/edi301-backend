@@ -19,7 +19,7 @@ async function add(req, res) {
 
     // Tiempo real: Notificar a la familia que hay un nuevo integrante
     if (req.io) {
-      req.io.to(id_familia.toString()).emit('miembro_agregado', {
+      req.io.to(`familia_${id_familia}`).emit('miembro_agregado', {
         id_familia,
         nuevoMiembro
       });
@@ -83,7 +83,7 @@ async function addBulk(req, res) {
 
     // Tiempo real: Actualizar lista de miembros en los clientes conectados
     if (req.io) {
-      req.io.to(id_familia.toString()).emit('miembros_actualizados', { id_familia });
+      req.io.to(`familia_${id_familia}`).emit('miembros_actualizados', { id_familia });
     }
 
     // Proceso de notificaciones (Push y DB)
@@ -133,7 +133,7 @@ async function addAlumnosToFamilia(req, res) {
 
     // Tiempo Real
     if (req.io && results.added.length > 0) {
-      req.io.to(id_familia.toString()).emit('nuevos_alumnos_asignados', { 
+      req.io.to(`familia_${id_familia}`).emit('nuevos_alumnos_asignados', { 
         id_familia, 
         cantidad: results.added.length 
       });

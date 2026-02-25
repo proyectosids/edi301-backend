@@ -105,6 +105,10 @@ exports.create = async (req, res) => {
 
     created(res, rows[0]);
 
+    // ✅ Tiempo real
+    req.io?.to('institucional').emit('evento_creado', rows[0]);
+    req.io?.emit('feed_actualizado', { source: 'agenda', id_actividad: rows[0].id_actividad });
+
     // Notificaciones
     (async () => {
       try {
@@ -167,6 +171,10 @@ exports.update = async (req, res) => {
     if (!rows || !rows.length) return notFound(res, 'No se pudo actualizar');
     ok(res, rows[0]);
 
+    // ✅ Tiempo real
+    req.io?.to('institucional').emit('evento_actualizado', rows[0]);
+    req.io?.emit('feed_actualizado', { source: 'agenda', id_actividad: rows[0].id_actividad });
+
   } catch (e) {
     console.error(e);
     fail(res, e);
@@ -190,5 +198,10 @@ exports.remove = async (req, res) => {
       id_actividad: { type: sql.Int, value: Number(req.params.id) }
     });
     ok(res, { message: 'Evento eliminado' });
+
+    // ✅ Tiempo real
+    const id_actividad = Number(req.params.id);
+    req.io?.to('institucional').emit('evento_eliminado', { id_actividad });
+    req.io?.emit('feed_actualizado', { source: 'agenda', id_actividad });
   } catch (e) { fail(res, e); }
 };

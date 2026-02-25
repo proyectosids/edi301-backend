@@ -60,17 +60,25 @@ exports.createGroup = async (req, res) => {
 // ENVIAR MENSAJE
 exports.sendMessage = async (req, res) => {
     try {
+        const io = req.io;
         const myId = req.user.id_usuario ?? req.user.id;
         const myName = req.user.nombre || "Alguien"; 
 
         const { id_sala, mensaje } = req.body;
 
-        await queryP(Q.sendMessage, {
+        const rows = await queryP(Q.sendMessage, {
             id_sala: { type: sql.Int, value: id_sala },
             id_usuario: { type: sql.Int, value: myId },
             mensaje: { type: sql.NVarChar, value: mensaje },
             tipo_mensaje: { type: sql.NVarChar, value: 'TEXTO' }
         });
+
+        const nuevoMensaje = rows?.[0];
+
+        // ✅ Tiempo real: emitir a la sala del chat
+        if (io && nuevoMensaje) {
+            io.to(`sala_${id_sala}`).emit('nuevo_mensaje', nuevoMensaje);
+        }
 
         ok(res, { message: 'Enviado' });
 

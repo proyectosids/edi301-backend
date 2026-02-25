@@ -15,6 +15,19 @@ exports.Q = {
   sendMessage: `
     INSERT INTO EDI.Chat_Mensajes (id_sala, id_usuario, mensaje, tipo_mensaje)
     VALUES (@id_sala, @id_usuario, @mensaje, @tipo_mensaje);
+
+    DECLARE @id_mensaje INT = SCOPE_IDENTITY();
+
+    SELECT 
+    m.id_mensaje,
+    m.id_sala,
+    m.id_usuario,
+    u.nombre as nombre_remitente,
+    m.mensaje,
+    m.created_at
+FROM EDI.Chat_Mensajes m
+JOIN EDI.Usuarios u ON u.id_usuario = m.id_usuario
+WHERE m.id_mensaje = @id_mensaje;
   `,
 
   // Listar mis chats 

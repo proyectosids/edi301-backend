@@ -58,6 +58,9 @@ console.log("TOKEN A ENVIAR:", padre.session_token);
             console.error("Error enviando notificaciones (La solicitud sí se creó):", notifError);
         }
     }
+    // ✅ Tiempo real
+    req.io?.to(`familia_${id_familia}`).emit('solicitud_creada', nuevaSolicitud);
+
     created(res, nuevaSolicitud);
 
   } catch (e) { fail(res, e); }
@@ -78,6 +81,9 @@ exports.setEstado = async (req, res) => {
       id_solicitud: { type: sql.Int, value: Number(req.params.id) }
     });
     if (!rows.length) return notFound(res);
+    // ✅ Tiempo real
+    req.io?.to(`familia_${rows[0].id_familia}`).emit('solicitud_estado_actualizado', rows[0]);
+
     ok(res, rows[0]);
   } catch (e) { fail(res, e); }
 };

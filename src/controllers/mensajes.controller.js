@@ -32,7 +32,7 @@ exports.create = async (req, res) => {
     const io = req.app.get('socketio');
     if (io) {
       // Emitimos a la sala de la familia
-      io.to(id_familia.toString()).emit('nuevo_mensaje', nuevoMensaje);
+      io.to(`familia_${id_familia}`).emit('nuevo_mensaje_familia', nuevoMensaje);
     }
 
     // 4. Notificación Push (Segundo plano)

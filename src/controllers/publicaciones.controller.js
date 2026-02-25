@@ -74,6 +74,20 @@ exports.create = async (req, res) => {
         console.log(`Publicación creada directamente por ${rol} (${usuario.nombre})`);
     }
 
+    // ✅ Tiempo real
+    const io = req.io;
+    if (io && post) {
+      if (post.id_familia) {
+        io.to(`familia_${post.id_familia}`).emit('post_creado', post);
+        if (post.estado === 'Pendiente') {
+          io.to(`familia_${post.id_familia}`).emit('post_pendiente_creado', post);
+        }
+      } else {
+        io.to('institucional').emit('post_creado', post);
+      }
+      io.emit('feed_actualizado', { source: 'publicaciones', id_post: post.id_post });
+    }
+
     created(res, post);
   } catch (e) { 
     console.error(e);
@@ -106,7 +120,7 @@ exports.setEstado = async (req, res) => {
     }
 
     const postInfo = await queryP(`
-        SELECT p.id_usuario, u.fcm_token, u.nombre 
+        SELECT p.id_usuario, p.id_familia, u.fcm_token, u.nombre 
         FROM EDI.Publicaciones p
         JOIN EDI.Usuarios u ON u.id_usuario = p.id_usuario
         WHERE p.id_post = @id_post
@@ -140,6 +154,16 @@ exports.setEstado = async (req, res) => {
         }
     }
 
+    // ✅ Tiempo real
+    const io = req.io;
+    const updated = rows[0];
+    if (io && updated) {
+      const room = updated.id_familia ? `familia_${updated.id_familia}` : 'institucional';
+      io.to(room).emit('post_estado_actualizado', updated);
+      if (updated.id_usuario) io.to(`user_${updated.id_usuario}`).emit('mi_post_estado_actualizado', updated);
+      io.emit('feed_actualizado', { source: 'publicaciones', id_post: updated.id_post });
+    }
+
     ok(res, rows[0]);
   } catch (e) { fail(res, e); }
 };
@@ -147,6 +171,14 @@ exports.setEstado = async (req, res) => {
 exports.remove = async (req, res) => {
   try {
     await queryP(Q.softDelete, { id_post: { type: sql.Int, value: Number(req.params.id) } });
+    // ✅ Tiempo real
+    const io = req.io;
+    if (io) {
+      // Intentamos obtener id_familia e id_usuario antes de eliminar (si ya no está, emitimos solo id_post)
+      io.emit('post_eliminado', { id_post: idPost });
+      io.emit('feed_actualizado', { source: 'publicaciones', id_post: idPost });
+    }
+
     ok(res, { message: 'Publicación eliminada' });
   } catch (e) { fail(res, e); }
 };
@@ -198,7 +230,10 @@ exports.toggleLike = async (req, res) => {
             id_usuario: { type: sql.Int, value: id_usuario }
         });
         
-        ok(res, result[0]); 
+            // ✅ Tiempo real
+    req.io?.emit('feed_actualizado', { source: 'publicaciones', id_post: id_post });
+
+ok(res, result[0]); 
     } catch (e) { fail(res, e); }
 };
 
@@ -215,6 +250,9 @@ exports.addComentario = async (req, res) => {
             id_usuario: { type: sql.Int, value: id_usuario },
             contenido: { type: sql.NVarChar, value: contenido }
         });
+
+        // ✅ Tiempo real
+        req.io?.emit('feed_actualizado', { source: 'publicaciones', id_post: id_post });
 
         created(res, { message: 'Comentario agregado' });
     } catch (e) { fail(res, e); }
@@ -252,7 +290,10 @@ exports.deleteComentario = async (req, res) => {
       { id: { type: sql.Int, value: idComentario } }
     );
 
-    ok(res, { message: 'Comentario eliminado' });
+        // ✅ Tiempo real
+    req.io?.emit('feed_actualizado', { source: 'publicaciones' });
+
+ok(res, { message: 'Comentario eliminado' });
 
   } catch (e) { fail(res, e); }
 };
