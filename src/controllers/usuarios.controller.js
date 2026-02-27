@@ -271,24 +271,26 @@ exports.updateEmail = async (req, res) => {
 };
 
 exports.updateToken = async (req, res) => {
-    try {
-        const { id_usuario, session_token } = req.body;
-        
-        if (!id_usuario || !session_token) {
-            return res.status(400).json({ msg: "Faltan datos (id_usuario o token)" });
-        }
+  try {
+    const { id_usuario, fcm_token, token, session_token } = req.body;
 
-        const pool = await getConnection();
-        await pool.request()
-            .input('id_usuario', sql.Int, id_usuario)
-            .input('token', sql.NVarChar, session_token)
-            .query(Q.updateFcm);
+    // acepta varias llaves para no romper clientes viejos
+    const incomingToken = fcm_token || token || session_token;
 
-        res.json({ msg: "Token actualizado correctamente" });
-    } catch (error) {
-        console.error("Error actualizando token:", error);
-        res.status(500).json({ msg: "Error interno" });
+    if (!id_usuario || !incomingToken) {
+      return bad(res, 'Faltan datos (id_usuario o fcm_token)');
     }
+
+    await queryP(UQ.updateFcm, {
+      id_usuario: { type: sql.Int, value: Number(id_usuario) },
+      token: { type: sql.NVarChar, value: incomingToken },
+    });
+
+    return ok(res, { msg: 'Token actualizado correctamente' });
+  } catch (e) {
+    console.error('Error actualizando token:', e);
+    return fail(res, e);
+  }
 };
 
 exports.getBirthdays = async (req, res) => {
