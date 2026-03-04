@@ -4,13 +4,13 @@ const C = require('../controllers/usuarios.controller');
 const F = require('../controllers/familias.controller');
 const validate = require('../utils/validate');
 const { createUserSchema, updateUserSchema } = require('../models/usuario.model');
-const {authGuard} = require('../middleware/authGuard')
+const auth = require('../middleware/authGuard')
 
 //router.get('/', C.list);
 router.get('/', C.searchUsers);
 router.get('/familias/by-doc/search', F.searchByDocument);
 router.put('/update-token', C.updateToken);
-router.get('/:id', C.get);
+router.get('/:id', auth, C.get);
 router.post('/', validate(createUserSchema), C.create);
 router.put('/:id', validate(updateUserSchema), C.update);
 router.delete('/:id', C.remove);

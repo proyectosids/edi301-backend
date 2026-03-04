@@ -32,25 +32,51 @@ WHERE m.id_mensaje = @id_mensaje;
 
   // Listar mis chats 
   getMyChats: `
-    SELECT 
-        s.id_sala,
-        s.tipo,
-        CASE 
-            WHEN s.tipo = 'GRUPAL' THEN s.nombre
-            ELSE (
-                SELECT TOP 1 u.nombre 
-                FROM EDI.Chat_Participantes cp2 
-                JOIN EDI.Usuarios u ON u.id_usuario = cp2.id_usuario
-                WHERE cp2.id_sala = s.id_sala AND cp2.id_usuario != @id_usuario
-            )
-        END as titulo_chat,
-        (SELECT TOP 1 m.mensaje FROM EDI.Chat_Mensajes m WHERE m.id_sala = s.id_sala ORDER BY m.created_at DESC) as ultimo_mensaje,
-        (SELECT TOP 1 m.created_at FROM EDI.Chat_Mensajes m WHERE m.id_sala = s.id_sala ORDER BY m.created_at DESC) as fecha_ultimo
-    FROM EDI.Chat_Salas s
-    JOIN EDI.Chat_Participantes cp ON cp.id_sala = s.id_sala
-    WHERE cp.id_usuario = @id_usuario AND s.activo = 1
-    ORDER BY fecha_ultimo DESC
-  `,
+  SELECT 
+      s.id_sala,
+      s.tipo,
+      CASE 
+          WHEN s.tipo = 'GRUPAL' THEN s.nombre
+          ELSE other.nombre
+      END as titulo_chat,
+
+      CASE 
+          WHEN s.tipo = 'GRUPAL' THEN NULL
+          ELSE other.id_usuario
+      END as id_usuario_chat,
+
+      CASE 
+          WHEN s.tipo = 'GRUPAL' THEN NULL
+          ELSE other.foto_perfil
+      END as foto_perfil_chat,
+
+      (SELECT TOP 1 m.mensaje 
+        FROM EDI.Chat_Mensajes m 
+        WHERE m.id_sala = s.id_sala 
+        ORDER BY m.created_at DESC) as ultimo_mensaje,
+
+      (SELECT TOP 1 m.created_at 
+        FROM EDI.Chat_Mensajes m 
+        WHERE m.id_sala = s.id_sala 
+        ORDER BY m.created_at DESC) as fecha_ultimo
+
+  FROM EDI.Chat_Salas s
+  JOIN EDI.Chat_Participantes cp ON cp.id_sala = s.id_sala
+
+  OUTER APPLY (
+      SELECT TOP 1 
+          u.id_usuario,
+          u.nombre,
+          u.foto_perfil
+      FROM EDI.Chat_Participantes cp2
+      JOIN EDI.Usuarios u ON u.id_usuario = cp2.id_usuario
+      WHERE cp2.id_sala = s.id_sala 
+        AND cp2.id_usuario <> @id_usuario
+  ) other
+
+  WHERE cp.id_usuario = @id_usuario AND s.activo = 1
+  ORDER BY fecha_ultimo DESC
+`,
 
   // Obtener mensajes de una sala específica
   getMensajes: `

@@ -13,7 +13,11 @@ exports.Q = {
       (p.nombre + ' ' + p.apellido) AS papa_nombre,
       (m.nombre + ' ' + m.apellido) AS mama_nombre,
       p.num_empleado AS papa_num_empleado,
-      m.num_empleado AS mama_num_empleado
+      m.num_empleado AS mama_num_empleado,
+      p.telefono AS papa_telefono,
+      m.telefono AS mama_telefono,
+      p.foto_perfil AS papa_foto_perfil_url,
+      m.foto_perfil AS mama_foto_perfil_url
 
     FROM EDI.Familias_EDI AS f
     LEFT JOIN EDI.Usuarios AS p ON p.id_usuario = f.papa_id

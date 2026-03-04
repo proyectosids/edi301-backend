@@ -133,7 +133,8 @@ exports.searchUsers = async (req, res) => {
         u.tipo_usuario    AS TipoUsuario,
         u.matricula       AS Matricula,
         u.num_empleado    AS NumEmpleado,
-        u.correo          AS E_mail
+        u.correo          AS E_mail,
+        u.foto_perfil     AS FotoPerfil
       FROM EDI.Usuarios u
       WHERE u.tipo_usuario = @tipo
     `;
