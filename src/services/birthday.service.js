@@ -74,10 +74,80 @@ const verificarCumpleanos = async () => {
   }
 };
 
+
+
+// =========================
+//  Recordatorio diario de oración (12:00 pm)
+// =========================
+const ORACION_FRASES = [
+  "Toma un momento para orar con Dios. 🙏",
+  "Haz una pausa, respira y habla con Dios. 🙏",
+  "Un minuto con Dios puede cambiar tu día. 🙏",
+  "Detén un instante tus actividades y ora. 🙏",
+  "Que este mediodía sea un recordatorio: Dios está contigo. 🙏",
+  "Antes de seguir, entrega tu día a Dios en oración. 🙏",
+];
+
+function _fraseOracionDelDia() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), 0, 0);
+  const oneDay = 1000 * 60 * 60 * 24;
+  const dayOfYear = Math.floor((now - start) / oneDay);
+  return ORACION_FRASES[dayOfYear % ORACION_FRASES.length];
+}
+
+function _chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+const enviarRecordatorioOracion = async () => {
+  try {
+    const frase = _fraseOracionDelDia();
+
+    const rows = await queryP(`
+      SELECT fcm_token
+      FROM EDI.Usuarios
+      WHERE activo = 1
+        AND fcm_token IS NOT NULL
+        AND LEN(fcm_token) > 10
+    `);
+
+    const tokens = (rows || []).map(r => r.fcm_token).filter(Boolean);
+
+    if (tokens.length === 0) {
+      console.log('🙏 No hay tokens FCM para recordatorio de oración.');
+      return;
+    }
+
+    const title = '🕛 Momento de oración';
+    const body = frase;
+
+    // FCM permite hasta 500 tokens por multicast
+    const batches = _chunk(tokens, 450);
+
+    for (const batch of batches) {
+      await enviarNotificacionMulticast(batch, title, body, {
+        tipo: 'ORACION_NOON',
+      });
+    }
+
+    console.log(`🙏 Recordatorio de oración enviado a ${tokens.length} dispositivos.`);
+  } catch (error) {
+    console.error('Error en recordatorio de oración:', error);
+  }
+};
+
 const initCronJobs = () => {
   cron.schedule('0 8 * * *', () => {
     verificarCumpleanos();
   }, { timezone: "America/Mexico_City" });
+
+  cron.schedule('0 12 * * *', () => {
+    enviarRecordatorioOracion();
+  }, { timezone: "America/Mexico_City" });
+
   console.log('Cron Jobs iniciados.');
 };
 
