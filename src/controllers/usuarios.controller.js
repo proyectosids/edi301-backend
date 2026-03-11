@@ -29,9 +29,11 @@ exports.create = async (req, res) => {
 
     const hashed = await hashPassword(value.contrasena);
 
+    const nombreFormateado = formatSpanishName(value.nombre);
+    const apellidoFormateado = formatSpanishName(value.apellido);
     const params = {
-      nombre:          { type: sql.NVarChar, value: value.nombre },
-      apellido:        { type: sql.NVarChar, value: value.apellido ?? null },
+      nombre:   { type: sql.NVarChar, value: nombreFormateado },
+      apellido: { type: sql.NVarChar, value: apellidoFormateado ?? null },
       correo:          { type: sql.NVarChar, value: value.correo },
       contrasena:      { type: sql.NVarChar, value: hashed },
       foto_perfil:     { type: sql.NVarChar, value: value.foto_perfil ?? null },
@@ -302,3 +304,33 @@ exports.getBirthdays = async (req, res) => {
     fail(res, e);
   }
 };
+
+function formatSpanishName(text) {
+  if (!text) return text;
+
+  const lowerWords = [
+    'de',
+    'del',
+    'la',
+    'las',
+    'los',
+    'y',
+    'da',
+    'dos',
+    'van',
+    'von',
+  ];
+
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .map((word, index) => {
+      if (lowerWords.includes(word) && index !== 0) {
+        return word;
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(' ');
+}
