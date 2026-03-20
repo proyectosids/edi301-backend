@@ -3,19 +3,7 @@ const { createUserSchema, updateUserSchema } = require('../models/usuario.model'
 const { hashPassword } = require('../utils/hash');
 const { ok, created, bad, fail, notFound } = require('../utils/http');
 const UQ = require('../queries/usuarios.queries').Q;
-const path = require('path'); 
-const fs = require('fs');
-const sharp = require('sharp');
 const { saveOptimizedProfilePhoto } = require('../utils/imageStorage');
-
-
-const UPLOAD_DIR = path.join(__dirname, '../public/uploads');
-const ensureUploadDir = () => {
-  if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-};
-
-
-
 
 exports.create = async (req, res) => {
 

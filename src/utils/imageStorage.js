@@ -1,61 +1,124 @@
-const path = require('path');
 const fs = require('fs');
 const sharp = require('sharp');
+const streamifier = require('streamifier');
+const cloudinary = require('./cloudinaryStorage');
 
-const UPLOAD_DIR = path.join(__dirname, '..', 'public', 'uploads');
+const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
+const MAX_BYTES = 5 * 1024 * 1024;
 
-function ensureUploadDir() {
-  if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+function isImageFile(file) {
+  if (!file) return false;
+
+  const mime = String(file.mimetype || '').toLowerCase();
+  const rawName = String(file.name || '');
+  const ext = rawName.includes('.') ? `.${rawName.split('.').pop().toLowerCase()}` : '';
+
+  const mimeOk = ALLOWED_MIME_TYPES.includes(mime);
+  const extOk = ALLOWED_EXTENSIONS.includes(ext);
+
+  if (mime === 'application/octet-stream' && extOk) return true;
+  return mimeOk || extOk;
 }
 
-
-async function saveOptimizedImage(file, { prefix = 'img', maxW = 1280, maxH = 1280, quality = 75 } = {}) {
+async function getInputBuffer(file) {
   if (!file) return null;
 
-  ensureUploadDir();
+  if (file.tempFilePath) {
+    const buffer = await fs.promises.readFile(file.tempFilePath);
+    try { fs.unlinkSync(file.tempFilePath); } catch (_) {}
+    return buffer;
+  }
 
-  const inputPath = file.tempFilePath;
+  return file.data || null;
+}
 
+function uploadBufferToCloudinary(buffer, { folder = 'edi301/general', publicId, resourceType = 'image' } = {}) {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder,
+        public_id: publicId,
+        resource_type: resourceType,
+        overwrite: true,
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      }
+    );
 
-  const fileName = `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e9)}.webp`;
-  const outPath = path.join(UPLOAD_DIR, fileName);
+    streamifier.createReadStream(buffer).pipe(uploadStream);
+  });
+}
 
-  await sharp(inputPath)
+function validateImageFile(file) {
+  if (!file) return;
+
+  if (!isImageFile(file)) {
+    throw new Error('Archivo no permitido. Solo se aceptan imágenes (jpg, jpeg, png, webp).');
+  }
+
+  if (file.size && file.size > MAX_BYTES) {
+    throw new Error('Imagen demasiado grande. Máximo 5MB.');
+  }
+}
+
+async function saveOptimizedImage(
+  file,
+  { prefix = 'img', maxW = 1280, maxH = 1280, quality = 75, folder = 'edi301/general', fit = 'inside' } = {}
+) {
+  if (!file) return null;
+
+  validateImageFile(file);
+
+  const inputBuffer = await getInputBuffer(file);
+  const outputBuffer = await sharp(inputBuffer)
     .rotate()
     .resize({
       width: maxW,
       height: maxH,
-      fit: 'inside',
-      withoutEnlargement: true
+      fit,
+      withoutEnlargement: true,
     })
     .webp({ quality })
-    .toFile(outPath);
+    .toBuffer();
 
+  const publicId = `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
 
-  try { fs.unlinkSync(inputPath); } catch (_) {}
+  const result = await uploadBufferToCloudinary(outputBuffer, {
+    folder,
+    publicId,
+    resourceType: 'image',
+  });
 
-  return `/uploads/${fileName}`;
+  return result.secure_url;
 }
 
 async function saveOptimizedProfilePhoto(file, userId) {
   if (!file) return null;
-  ensureUploadDir();
 
-  // Forzamos formato .webp para ahorrar espacio y estandarizar
-  const fileName = `perfil-${userId}-${Date.now()}.webp`;
-  const outPath = path.join(UPLOAD_DIR, fileName);
+  validateImageFile(file);
 
-  await sharp(file.tempFilePath || file.data)
+  const inputBuffer = await getInputBuffer(file);
+  const outputBuffer = await sharp(inputBuffer)
     .rotate()
-    .resize(512, 512, { fit: 'cover' }) // Tamaño estándar para perfiles
+    .resize(512, 512, { fit: 'cover' })
     .webp({ quality: 80 })
-    .toFile(outPath);
+    .toBuffer();
 
-  if (file.tempFilePath) {
-    try { fs.unlinkSync(file.tempFilePath); } catch (_) {}
-  }
+  const result = await uploadBufferToCloudinary(outputBuffer, {
+    folder: 'edi301/profiles',
+    publicId: `perfil-${userId}-${Date.now()}`,
+    resourceType: 'image',
+  });
 
-  return `/uploads/${fileName}`;
+  return result.secure_url;
 }
 
-module.exports = { saveOptimizedImage, saveOptimizedProfilePhoto };
+module.exports = {
+  isImageFile,
+  validateImageFile,
+  saveOptimizedImage,
+  saveOptimizedProfilePhoto,
+};

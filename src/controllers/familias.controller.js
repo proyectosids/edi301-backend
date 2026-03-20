@@ -2,9 +2,7 @@ const { sql, pool, queryP } = require('../dataBase/dbConnection');
 const { ok, created, bad, notFound, fail } = require('../utils/http');
 const { Q } = require('../queries/familias.queries');
 const MiembrosQ = require('../queries/miembros.queries').Q;
-const path = require('path');
-const fs = require('fs');
-const sharp = require('sharp');
+const { saveOptimizedImage } = require('../utils/imageStorage');
 const { enviarNotificacionMulticast } = require('../utils/firebase');
 const withBase = (tpl) => tpl.replace('{{BASE}}', Q.base);
 
@@ -263,81 +261,22 @@ exports.reporteCompleto = async (_req, res) => {
   } catch (e) { fail(res, e); }
 };
 
-const UPLOAD_DIR = path.join(__dirname, '..', 'public', 'uploads');
-
-const ensureUploadDir = () => {
-  if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-};
-
-const isImageFile = (file) => {
-  if (!file) return false;
-
-  const mime = (file.mimetype || '').toLowerCase();
-  const ext = path.extname(file.name || '').toLowerCase();
-
-  const mimeOk = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'].includes(mime);
-  const extOk = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext);
-
-  if (mime === 'application/octet-stream' && extOk) return true;
-
-  return mimeOk || extOk;
-};
-
-
-const saveFile = async (file, id_familia, tipo) => {
+const saveFamilyImage = async (file, id_familia, tipo) => {
   if (!file) return null;
 
-  if (!isImageFile(file)) {
-  throw new Error('Archivo no permitido. Solo imágenes (jpg, jpeg, png, webp).');
-}
+  const resizeOpts = tipo === 'portada'
+    ? { maxW: 1600, maxH: 900, quality: 75, folder: 'edi301/familias/portadas' }
+    : { maxW: 512, maxH: 512, quality: 80, folder: 'edi301/familias/perfiles', fit: 'cover' };
 
-
-  const MAX_BYTES = 5 * 1024 * 1024; // 5MB
-  if (file.size && file.size > MAX_BYTES) {
-    throw new Error('Imagen demasiado grande. Máximo 5MB.');
-  }
-
-  ensureUploadDir();
-
-  // Guardamos siempre en webp
-  const fileName = `familia-${id_familia}-${tipo}-${Date.now()}-${Math.round(Math.random() * 1e9)}.webp`;
-  const savePath = path.join(UPLOAD_DIR, fileName);
-
-  // Tamaños distintos según tipo
-  const resizeOpts =
-    tipo === 'portada'
-      ? { width: 1600, height: 900, quality: 75 }
-      : { width: 512, height: 512, quality: 75 };
-
-  if (file.tempFilePath) {
-    await sharp(file.tempFilePath)
-      .rotate()
-      .resize({
-        width: resizeOpts.width,
-        height: resizeOpts.height,
-        fit: 'inside',
-        withoutEnlargement: true
-      })
-      .webp({ quality: resizeOpts.quality })
-      .toFile(savePath);
-
-    try { fs.unlinkSync(file.tempFilePath); } catch (_) {}
-  } else {
-    await sharp(file.data)
-      .rotate()
-      .resize({
-        width: resizeOpts.width,
-        height: resizeOpts.height,
-        fit: 'inside',
-        withoutEnlargement: true
-      })
-      .webp({ quality: resizeOpts.quality })
-      .toFile(savePath);
-  }
-
-  return `/uploads/${fileName}`;
+  return await saveOptimizedImage(file, {
+    prefix: `familia-${id_familia}-${tipo}`,
+    maxW: resizeOpts.maxW,
+    maxH: resizeOpts.maxH,
+    quality: resizeOpts.quality,
+    folder: resizeOpts.folder,
+    fit: resizeOpts.fit || 'inside',
+  });
 };
-
 
 exports.uploadFotos = async (req, res) => {
   try {
@@ -349,11 +288,11 @@ let urlPerfil = null;
 
 try {
   urlPortada = req.files.foto_portada
-    ? await saveFile(req.files.foto_portada, id_familia, 'portada')
+    ? await saveFamilyImage(req.files.foto_portada, id_familia, 'portada')
     : null;
 
   urlPerfil = req.files.foto_perfil
-    ? await saveFile(req.files.foto_perfil, id_familia, 'perfil')
+    ? await saveFamilyImage(req.files.foto_perfil, id_familia, 'perfil')
     : null;
 } catch (imgErr) {
   return bad(res, imgErr.message || 'Error procesando imagen');

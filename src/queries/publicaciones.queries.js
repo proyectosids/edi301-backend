@@ -41,20 +41,29 @@ exports.Q = {
   `,
 
   listByFamilia: `
-    SELECT 
-        p.*, 
-        u.nombre, u.apellido, u.foto_perfil,
-        f.nombre_familia,
-        (SELECT COUNT(*) FROM EDI.Publicaciones_Likes pl WHERE pl.id_post = p.id_post) as likes_count,
-        (SELECT COUNT(*) FROM EDI.Publicaciones_Comentarios pc WHERE pc.id_post = p.id_post AND pc.activo = 1) as comentarios_count,
-        CASE WHEN EXISTS (SELECT 1 FROM EDI.Publicaciones_Likes pl WHERE pl.id_post = p.id_post AND pl.id_usuario = @current_user_id) THEN 1 ELSE 0 END as is_liked
-    FROM EDI.Publicaciones p
-    JOIN EDI.Usuarios u ON u.id_usuario = p.id_usuario
-    LEFT JOIN EDI.Familias_EDI f ON f.id_familia = p.id_familia
-    WHERE p.id_familia = @id_familia AND p.activo = 1
-      AND (p.estado = 'Publicado' OR p.estado = 'Aprobada')
-    ORDER BY p.fecha_publicacion DESC
-  `,
+  SELECT 
+      p.*, 
+      u.nombre, u.apellido, u.foto_perfil,
+      f.nombre_familia,
+      (SELECT COUNT(*) FROM EDI.Publicaciones_Likes pl WHERE pl.id_post = p.id_post) as likes_count,
+      (SELECT COUNT(*) FROM EDI.Publicaciones_Comentarios pc WHERE pc.id_post = p.id_post AND pc.activo = 1) as comentarios_count,
+      CASE 
+        WHEN EXISTS (
+          SELECT 1 
+          FROM EDI.Publicaciones_Likes pl 
+          WHERE pl.id_post = p.id_post AND pl.id_usuario = @current_user_id
+        ) THEN 1 ELSE 0 
+      END as is_liked
+  FROM EDI.Publicaciones p
+  JOIN EDI.Usuarios u ON u.id_usuario = p.id_usuario
+  LEFT JOIN EDI.Familias_EDI f ON f.id_familia = p.id_familia
+  WHERE p.id_familia = @id_familia 
+    AND p.activo = 1
+    AND (p.estado = 'Publicado' OR p.estado = 'Aprobada')
+  ORDER BY p.created_at DESC, p.id_post DESC
+  OFFSET @offset ROWS
+  FETCH NEXT @limit ROWS ONLY
+`,
 
   listInstitucional: `
     SELECT p.*, u.nombre, u.apellido
@@ -63,7 +72,7 @@ exports.Q = {
     WHERE p.id_familia IS NULL AND p.categoria_post = N'Institucional' AND p.activo = 1
     ORDER BY p.fecha_publicacion DESC
   `,
-  
+
   setEstado: `
     UPDATE EDI.Publicaciones
     SET estado = @estado, updated_at = GETDATE()
@@ -71,7 +80,7 @@ exports.Q = {
 
     SELECT * FROM EDI.Publicaciones WHERE id_post = @id_post;
   `,
-  
+
   softDelete: `UPDATE EDI.Publicaciones SET activo = 0, updated_at = GETDATE() WHERE id_post = @id_post`,
   listByUsuario: `
     SELECT p.*, u.nombre, u.apellido
@@ -105,18 +114,72 @@ exports.Q = {
     ORDER BY c.created_at ASC
   `,
   listGlobal: `
-    SELECT 
-        p.*, 
-        u.nombre, u.apellido, u.foto_perfil,
-        f.nombre_familia,
-        (SELECT COUNT(*) FROM EDI.Publicaciones_Likes pl WHERE pl.id_post = p.id_post) as likes_count,
-        (SELECT COUNT(*) FROM EDI.Publicaciones_Comentarios pc WHERE pc.id_post = p.id_post AND pc.activo = 1) as comentarios_count,
-        CASE WHEN EXISTS (SELECT 1 FROM EDI.Publicaciones_Likes pl WHERE pl.id_post = p.id_post AND pl.id_usuario = @current_user_id) THEN 1 ELSE 0 END as is_liked
-    FROM EDI.Publicaciones p
-    JOIN EDI.Usuarios u ON u.id_usuario = p.id_usuario
-    LEFT JOIN EDI.Familias_EDI f ON f.id_familia = p.id_familia
-    WHERE p.activo = 1
-      AND (p.estado = 'Publicado' OR p.estado = 'Aprobada')
-    ORDER BY p.created_at DESC
-  `,
+  SELECT 
+    p.id_post,
+    p.id_familia,
+    p.id_usuario,
+    p.mensaje,
+    p.url_imagen,
+    p.estado,
+    p.tipo,
+    p.created_at,
+    u.nombre,
+    u.apellido,
+    u.foto_perfil,
+    f.nombre_familia,
+    (SELECT COUNT(*) 
+     FROM EDI.Publicaciones_Likes pl 
+     WHERE pl.id_post = p.id_post) AS likes_count,
+    (SELECT COUNT(*) 
+     FROM EDI.Publicaciones_Comentarios pc 
+     WHERE pc.id_post = p.id_post AND pc.activo = 1) AS comentarios_count,
+    CASE 
+      WHEN EXISTS (
+        SELECT 1 
+        FROM EDI.Publicaciones_Likes pl 
+        WHERE pl.id_post = p.id_post 
+          AND pl.id_usuario = @current_user_id
+      ) THEN 1 ELSE 0 
+    END AS is_liked
+  FROM EDI.Publicaciones p
+  INNER JOIN EDI.Usuarios u ON u.id_usuario = p.id_usuario
+  LEFT JOIN EDI.Familias_EDI f ON f.id_familia = p.id_familia
+  WHERE p.activo = 1
+    AND (p.estado = 'Publicado' OR p.estado = 'Aprobada')
+  ORDER BY p.created_at DESC, p.id_post DESC
+  OFFSET @offset ROWS
+  FETCH NEXT @limit ROWS ONLY
+`,
+
+  getPostOwner: `
+  SELECT p.id_post, p.id_usuario, p.id_familia, u.nombre, u.fcm_token
+  FROM EDI.Publicaciones p
+  JOIN EDI.Usuarios u ON u.id_usuario = p.id_usuario
+  WHERE p.id_post = @id_post AND p.activo = 1
+`,
+
+  getFamilyTokensForPostNotification: `
+  SELECT DISTINCT u.id_usuario, u.fcm_token, u.nombre
+  FROM EDI.Miembros_Familia mf
+  JOIN EDI.Usuarios u ON u.id_usuario = mf.id_usuario
+  WHERE mf.id_familia = @id_familia
+    AND mf.activo = 1
+    AND u.activo = 1
+    AND u.fcm_token IS NOT NULL
+    AND u.id_usuario <> @id_usuario_excluir
+`,
+
+  getGlobalTokensForPostNotification: `
+  SELECT u.id_usuario, u.fcm_token, u.nombre
+  FROM EDI.Usuarios u
+  WHERE u.activo = 1
+    AND u.fcm_token IS NOT NULL
+    AND u.id_usuario <> @id_usuario_excluir
+`,
+
+  getUserBasicInfo: `
+  SELECT id_usuario, nombre, apellido
+  FROM EDI.Usuarios
+  WHERE id_usuario = @id_usuario
+`,
 };
