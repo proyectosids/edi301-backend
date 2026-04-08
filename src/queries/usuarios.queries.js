@@ -181,11 +181,54 @@ exports.Q = {
       id_usuario, 
       nombre, 
       apellido, 
-      url_foto_perfil, 
+      foto_perfil, 
       fecha_nacimiento 
     FROM EDI.Usuarios 
     WHERE DAY(fecha_nacimiento) = DAY(GETDATE()) 
     AND MONTH(fecha_nacimiento) = MONTH(GETDATE()) 
     AND activo = 1
+    ORDER BY nombre
+  `,
+  birthdaysUpcoming: `
+    SELECT
+      id_usuario, nombre, apellido, foto_perfil, fecha_nacimiento,
+      DATEDIFF(DAY, CAST(GETDATE() AS DATE),
+        DATEFROMPARTS(
+          CASE WHEN MONTH(fecha_nacimiento) < MONTH(GETDATE())
+                 OR  (MONTH(fecha_nacimiento) = MONTH(GETDATE()) AND DAY(fecha_nacimiento) <= DAY(GETDATE()))
+               THEN YEAR(GETDATE()) + 1
+               ELSE YEAR(GETDATE())
+          END,
+          MONTH(fecha_nacimiento), DAY(fecha_nacimiento)
+        )
+      ) AS dias_para_cumple
+    FROM EDI.Usuarios
+    WHERE activo = 1
+      AND DATEDIFF(DAY, CAST(GETDATE() AS DATE),
+            DATEFROMPARTS(
+              CASE WHEN MONTH(fecha_nacimiento) < MONTH(GETDATE())
+                     OR (MONTH(fecha_nacimiento) = MONTH(GETDATE()) AND DAY(fecha_nacimiento) <= DAY(GETDATE()))
+                   THEN YEAR(GETDATE()) + 1
+                   ELSE YEAR(GETDATE())
+              END,
+              MONTH(fecha_nacimiento), DAY(fecha_nacimiento)
+            )
+          ) BETWEEN 1 AND 5
+    ORDER BY dias_para_cumple
+  `,
+  birthdaysPast: `
+    SELECT
+      id_usuario, nombre, apellido, foto_perfil, fecha_nacimiento,
+      DATEDIFF(DAY,
+        DATEFROMPARTS(YEAR(GETDATE()), MONTH(fecha_nacimiento), DAY(fecha_nacimiento)),
+        CAST(GETDATE() AS DATE)
+      ) AS dias_cumplidos
+    FROM EDI.Usuarios
+    WHERE activo = 1
+      AND MONTH(fecha_nacimiento) <= MONTH(GETDATE())
+      AND DATEFROMPARTS(YEAR(GETDATE()), MONTH(fecha_nacimiento), DAY(fecha_nacimiento))
+            BETWEEN DATEFROMPARTS(YEAR(GETDATE()), 1, 1)
+                AND DATEADD(DAY, -1, CAST(GETDATE() AS DATE))
+    ORDER BY MONTH(fecha_nacimiento), DAY(fecha_nacimiento)
   `,
 };

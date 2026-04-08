@@ -2,7 +2,9 @@ const cron = require('node-cron');
 const { sql, queryP } = require('../dataBase/dbConnection');
 const { enviarNotificacionMulticast } = require('../utils/firebase');
 const ID_AUTOR_SISTEMA = 1; 
-const IMAGEN_CUMPLEANOS = '/uploads/image.png'; 
+let IMAGEN_CUMPLEANOS = '/uploads/image.png';
+const getImagenCumpleanos = () => IMAGEN_CUMPLEANOS;
+const setImagenCumpleanos = (url) => { IMAGEN_CUMPLEANOS = url; };
 const verificarCumpleanos = async () => {
   console.log('🎂 Iniciando verificación diaria de cumpleaños...');
 
@@ -170,4 +172,4 @@ const initCronJobs = () => {
   console.log('Cron Jobs iniciados.');
 };
 
-module.exports = { initCronJobs };
+module.exports = { initCronJobs, getImagenCumpleanos, setImagenCumpleanos };

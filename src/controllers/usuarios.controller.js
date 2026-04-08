@@ -1,3 +1,4 @@
+const { getImagenCumpleanos, setImagenCumpleanos } = require('../services/birthday.service');
 const { sql, queryP } = require('../dataBase/dbConnection');
 const { createUserSchema, updateUserSchema } = require('../models/usuario.model');
 const { hashPassword } = require('../utils/hash');
@@ -286,7 +287,12 @@ exports.updateToken = async (req, res) => {
 
 exports.getBirthdays = async (req, res) => {
   try {
-    const rows = await queryP(Q.birthdaysToday);
+    const rango = (req.query.rango || 'hoy').toLowerCase();
+    let query;
+    if (rango === 'proximos') query = UQ.birthdaysUpcoming;
+    else if (rango === 'pasados') query = UQ.birthdaysPast;
+    else query = UQ.birthdaysToday;
+    const rows = await queryP(query);
     ok(res, rows);
   } catch (e) {
     fail(res, e);
@@ -322,3 +328,13 @@ function formatSpanishName(text) {
     })
     .join(' ');
 }
+exports.getImagenCumpleanos = (req, res) => {
+  ok(res, { imagen: getImagenCumpleanos() });
+};
+
+exports.setImagenCumpleanos = (req, res) => {
+  const { imagen_url } = req.body;
+  if (!imagen_url) return bad(res, 'imagen_url es requerida');
+  setImagenCumpleanos(imagen_url);
+  ok(res, { ok: true, imagen: getImagenCumpleanos() });
+};
