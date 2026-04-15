@@ -281,35 +281,45 @@ const saveFamilyImage = async (file, id_familia, tipo) => {
 exports.uploadFotos = async (req, res) => {
   try {
     const id_familia = Number(req.params.id);
-    if (!req.files) return bad(res, 'No se subió ningún archivo.');
 
+    if (!req.files || Object.keys(req.files).length === 0) {
+      return bad(res, 'No se subió ningún archivo.');
+    }
+
+    // ── Procesar imágenes (errores aquí → 400) ─────────────────────────────
     let urlPortada = null;
-let urlPerfil = null;
+    let urlPerfil  = null;
 
-try {
-  urlPortada = req.files.foto_portada
-    ? await saveFamilyImage(req.files.foto_portada, id_familia, 'portada')
-    : null;
+    try {
+      urlPortada = req.files.foto_portada
+        ? await saveFamilyImage(req.files.foto_portada, id_familia, 'portada')
+        : null;
 
-  urlPerfil = req.files.foto_perfil
-    ? await saveFamilyImage(req.files.foto_perfil, id_familia, 'perfil')
-    : null;
-} catch (imgErr) {
-  return bad(res, imgErr.message || 'Error procesando imagen');
-}
+      urlPerfil = req.files.foto_perfil
+        ? await saveFamilyImage(req.files.foto_perfil, id_familia, 'perfil')
+        : null;
+    } catch (imgErr) {
+      console.error('uploadFotos – error al procesar imagen:', imgErr.message);
+      return bad(res, imgErr.message || 'Error al procesar la imagen. Asegúrate de subir una imagen válida (jpg, png, webp).');
+    }
 
+    if (!urlPortada && !urlPerfil) {
+      return bad(res, 'No se pudieron procesar los archivos. Verifica que sean imágenes válidas.');
+    }
 
-    if (!urlPortada && !urlPerfil) return bad(res, 'No se subieron archivos válidos.');
-
+    // ── Guardar URLs en la DB (errores aquí → 500) ─────────────────────────
     await queryP(Q.updateFotos, {
-      id_familia: { type: sql.Int, value: id_familia },
+      id_familia:      { type: sql.Int,      value: id_familia },
       foto_portada_url: { type: sql.NVarChar, value: urlPortada },
-      foto_perfil_url: { type: sql.NVarChar, value: urlPerfil }
+      foto_perfil_url:  { type: sql.NVarChar, value: urlPerfil  },
     });
 
-    const rows = await queryP(withBase(Q.byId), { id_familia: { type: sql.Int, value: id_familia }, });
+    const rows = await queryP(withBase(Q.byId), {
+      id_familia: { type: sql.Int, value: id_familia },
+    });
     if (!rows.length) return notFound(res);
     ok(res, rows[0]);
+
   } catch (e) {
     console.error('uploadFotos error:', e);
     fail(res, e);

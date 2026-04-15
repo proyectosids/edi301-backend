@@ -96,8 +96,7 @@ exports.Q = {
   UPDATE EDI.Familias_EDI
   SET
     foto_portada_url = COALESCE(@foto_portada_url, foto_portada_url),
-    foto_perfil_url = COALESCE(@foto_perfil_url, foto_perfil_url),
-    updated_at = GETDATE()
+    foto_perfil_url  = COALESCE(@foto_perfil_url,  foto_perfil_url)
   WHERE id_familia = @id_familia AND activo = 1
 `,
   updateFotoPerfil: "UPDATE familias SET foto_perfil = ? WHERE id = ?",

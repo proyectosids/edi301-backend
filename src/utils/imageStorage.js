@@ -3,8 +3,13 @@ const sharp = require('sharp');
 const streamifier = require('streamifier');
 const cloudinary = require('./cloudinaryStorage');
 
-const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
-const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
+const ALLOWED_MIME_TYPES = [
+  'image/jpeg', 'image/jpg', 'image/png', 'image/webp',
+  'image/heic', 'image/heif',           // iOS / Android cámaras modernas
+  'image/bmp', 'image/tiff',            // otros formatos comunes
+  'application/octet-stream',           // algunos clientes no detectan el tipo
+];
+const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.bmp', '.tiff', '.tif'];
 const MAX_BYTES = 5 * 1024 * 1024;
 
 function isImageFile(file) {
@@ -17,8 +22,9 @@ function isImageFile(file) {
   const mimeOk = ALLOWED_MIME_TYPES.includes(mime);
   const extOk = ALLOWED_EXTENSIONS.includes(ext);
 
-  if (mime === 'application/octet-stream' && extOk) return true;
-  return mimeOk || extOk;
+  // Acepta si el MIME está permitido O si la extensión está permitida.
+  // Si no hay ni MIME ni extensión reconocible, deja que sharp intente procesarlo.
+  return mimeOk || extOk || mime === '';
 }
 
 async function getInputBuffer(file) {
