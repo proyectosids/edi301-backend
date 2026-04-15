@@ -13,7 +13,7 @@ exports.createFamilia = Joi.object({
   papa_id: Joi.number().integer().allow(null),
   mama_id: Joi.number().integer().allow(null),
   hijos: Joi.array().items(Joi.number().integer()).optional(),
-  descripcion: Joi.string().max(255).allow(null, ''),
+  descripcion: Joi.string().max(500).allow(null, ''),
 }).options({ stripUnknown: true });
 
 exports.updateFamilia = Joi.object({
@@ -26,5 +26,5 @@ exports.updateFamilia = Joi.object({
   }),
   papa_id: Joi.number().integer().allow(null),
   mama_id: Joi.number().integer().allow(null),
-  descripcion: Joi.string().max(255).allow(null, ''),
+  descripcion: Joi.string().max(500).allow(null, ''),
 }).options({ stripUnknown: true });
