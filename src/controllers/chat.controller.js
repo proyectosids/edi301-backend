@@ -91,14 +91,14 @@ exports.sendMessage = async (req, res) => {
 
 async function _sendPushToRoom(idSala, senderId, senderName, messageText) {
     try {
-        // Buscar tokens
+        // Buscar tokens de todos los participantes excepto el emisor
         const queryTokens = `
-            SELECT u.fcm_token 
+            SELECT u.id_usuario, u.fcm_token
             FROM EDI.Chat_Participantes cp
             JOIN EDI.Usuarios u ON u.id_usuario = cp.id_usuario
-            WHERE cp.id_sala = @idSala 
+            WHERE cp.id_sala = @idSala
               AND cp.id_usuario != @senderId
-              AND u.fcm_token IS NOT NULL 
+              AND u.fcm_token IS NOT NULL
               AND LEN(u.fcm_token) > 10
         `;
 
@@ -107,23 +107,40 @@ async function _sendPushToRoom(idSala, senderId, senderName, messageText) {
             senderId: { type: sql.Int, value: senderId }
         });
 
-        if (rows.length === 0) return;
+        console.log(`📲 Push sala=${idSala}: ${rows.length} destinatario(s) con token`);
+
+        if (rows.length === 0) {
+            // Diagnóstico extra: verificar si hay participantes sin token
+            const queryAll = `
+                SELECT u.id_usuario,
+                       CASE WHEN u.fcm_token IS NULL THEN 'SIN_TOKEN' ELSE 'CON_TOKEN' END as estado_token
+                FROM EDI.Chat_Participantes cp
+                JOIN EDI.Usuarios u ON u.id_usuario = cp.id_usuario
+                WHERE cp.id_sala = @idSala AND cp.id_usuario != @senderId
+            `;
+            const allRows = await queryP(queryAll, {
+                idSala: { type: sql.Int, value: idSala },
+                senderId: { type: sql.Int, value: senderId }
+            });
+            console.log(`⚠️ Participantes restantes en sala ${idSala}:`, allRows);
+            return;
+        }
 
         const tokens = rows.map(r => r.fcm_token);
 
         await enviarNotificacionMulticast(
-            tokens, 
-            senderName, 
-            messageText, 
+            tokens,
+            senderName,
+            messageText,
             {
                 tipo: "CHAT_MESSAGE",
-                id_sala: idSala,
+                id_sala: String(idSala),
                 click_action: "FLUTTER_NOTIFICATION_CLICK"
             }
         );
-        
+
     } catch (error) {
-        console.error("❌ Error enviando Push:", error);
+        console.error("❌ Error enviando Push de chat:", error);
     }
 }
 
