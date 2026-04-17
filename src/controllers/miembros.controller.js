@@ -2,9 +2,41 @@ const { sql, queryP, pool } = require('../dataBase/dbConnection');
 const { ok, created, bad, fail } = require('../utils/http');
 const { enviarNotificacionPush, enviarNotificacionMulticast } = require('../utils/firebase');
 
+// ── Helper ────────────────────────────────────────────────────────────────
+/** Devuelve { id_familia, nombre_familia } si el usuario ya está en otra familia activa */
+async function _usuarioEnOtraFamilia(userId, excludeFamiliaId = null) {
+  const params = { uid: { type: sql.Int, value: Number(userId) } };
+  let q = `
+    SELECT TOP 1 mf.id_familia, f.nombre_familia
+    FROM EDI.Miembros_Familia mf
+    JOIN EDI.Familias_EDI f ON f.id_familia = mf.id_familia
+    WHERE mf.id_usuario = @uid
+      AND mf.activo = 1
+      AND f.activo = 1
+  `;
+  if (excludeFamiliaId) {
+    q += ` AND mf.id_familia <> @excl`;
+    params.excl = { type: sql.Int, value: Number(excludeFamiliaId) };
+  }
+  const rows = await queryP(q, params);
+  return rows[0] ?? null;
+}
+
 async function add(req, res) {
   try {
     const { id_familia, id_usuario, tipo_miembro } = req.body;
+
+    // Validar que el usuario no esté ya en otra familia activa
+    const conflict = await _usuarioEnOtraFamilia(id_usuario, id_familia);
+    if (conflict) {
+      return res.status(409).json({
+        ok: false,
+        error: `Este usuario ya pertenece a la familia "${conflict.nombre_familia}". No puede estar en más de una familia.`,
+        nombre_familia_existente: conflict.nombre_familia,
+        id_familia_existente: conflict.id_familia,
+      });
+    }
+
     const rows = await queryP(`
       INSERT INTO EDI.Miembros_Familia (id_familia, id_usuario, tipo_miembro, activo, created_at)
       OUTPUT INSERTED.id_miembro
@@ -59,13 +91,27 @@ async function remove(req, res) {
 }
 
 async function addBulk(req, res) {
-  const transaction = new sql.Transaction(pool); 
+  const transaction = new sql.Transaction(pool);
   try {
     const { id_familia, id_usuarios } = req.body;
-    const familiaRes = await queryP('SELECT nombre_familia FROM EDI.Familias_EDI WHERE id_familia = @id', { 
-        id: { type: sql.Int, value: id_familia } 
+    const familiaRes = await queryP('SELECT nombre_familia FROM EDI.Familias_EDI WHERE id_familia = @id', {
+        id: { type: sql.Int, value: id_familia }
     });
     const nombreFamilia = familiaRes[0]?.nombre_familia || 'Familia';
+
+    // Validar conflictos ANTES de abrir la transacción
+    const conflicts = [];
+    for (const id_usuario of id_usuarios) {
+      const c = await _usuarioEnOtraFamilia(id_usuario, id_familia);
+      if (c) conflicts.push({ id_usuario, nombre_familia: c.nombre_familia });
+    }
+    if (conflicts.length > 0) {
+      return res.status(409).json({
+        ok: false,
+        error: 'Algunos usuarios ya pertenecen a otra familia.',
+        conflicts,
+      });
+    }
 
     await transaction.begin();
     for (const id_usuario of id_usuarios) {
@@ -107,14 +153,22 @@ async function addAlumnosToFamilia(req, res) {
     const fRes = await new sql.Request(transaction).query(`SELECT nombre_familia FROM EDI.Familias_EDI WHERE id_familia = ${id_familia}`);
     const nombreFamilia = fRes.recordset[0]?.nombre_familia || 'Familia';
     
-    const results = { added: [], notFound: [], errors: [], usersNotif: [] };
+    const results = { added: [], notFound: [], errors: [], conflicts: [], usersNotif: [] };
 
     for (const matricula of matriculas) {
       try {
         const uRes = await new sql.Request(transaction).query(`SELECT id_usuario, fcm_token FROM EDI.Usuarios WHERE matricula = ${parseInt(matricula)}`);
         if (!uRes.recordset.length) { results.notFound.push(matricula); continue; }
-        
+
         const user = uRes.recordset[0];
+
+        // Validar que el usuario no esté en otra familia
+        const conflict = await _usuarioEnOtraFamilia(user.id_usuario, id_familia);
+        if (conflict) {
+          results.conflicts.push({ matricula, nombre_familia: conflict.nombre_familia });
+          continue;
+        }
+
         const mReq = new sql.Request(transaction);
         mReq.input('idF', sql.Int, id_familia);
         mReq.input('idU', sql.Int, user.id_usuario);
@@ -142,7 +196,7 @@ async function addAlumnosToFamilia(req, res) {
     // Notificaciones externas
     _enviarNotificacionesAlumnos(id_familia, results.usersNotif, nombreFamilia, results.added.length);
 
-    return ok(res, { added: results.added, notFound: results.notFound, errors: results.errors });
+    return ok(res, { added: results.added, notFound: results.notFound, errors: results.errors, conflicts: results.conflicts });
   } catch (e) {
     if (transaction.rolledBack === false) await transaction.rollback();
     fail(res, e);
@@ -179,7 +233,7 @@ async function _enviarNotificacionesAlumnos(id_familia, usersNotif, nombreFamili
     // Notificar a alumnos
     for (const u of usersNotif) {
         const tit = 'Nueva Asignación 🎒';
-        const body = `Has sido asignado a la familia "${nombreFamilia}".`;
+        const body = `Has sido asignado a la ${nombreFamilia}.`;
         queryP(`INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
                 VALUES (@uid, @tit, @body, 'ASIGNACION', @ref, 0, GETDATE())`, {
             uid: { type: sql.Int, value: u.id_usuario },

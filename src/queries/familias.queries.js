@@ -47,7 +47,7 @@ exports.Q = {
     SET
       nombre_familia = COALESCE(@nombre_familia, nombre_familia),
       residencia     = COALESCE(@residencia, residencia),
-      direccion      = COALESCE(@direccion, direccion),
+      direccion      = CASE WHEN @residencia = 'INTERNA' THEN NULL ELSE COALESCE(@direccion, direccion) END,
       papa_id        = COALESCE(@papa_id, papa_id),
       mama_id        = COALESCE(@mama_id, mama_id),
       descripcion    = COALESCE(@descripcion, descripcion)
@@ -58,6 +58,31 @@ exports.Q = {
 
   softDelete: `
     UPDATE EDI.Familias_EDI SET activo = 0 WHERE id_familia = @id_familia
+  `,
+
+  reactivate: `
+    UPDATE EDI.Familias_EDI SET activo = 1 WHERE id_familia = @id_familia
+  `,
+
+  listInactive: `
+    SELECT
+      f.id_familia,
+      f.nombre_familia,
+      f.foto_portada_url AS portada,
+      f.residencia,
+      f.descripcion,
+      (SELECT COUNT(*) FROM EDI.Miembros_Familia mf
+       WHERE mf.id_familia = f.id_familia AND mf.activo = 1) AS num_miembros,
+      ISNULL((
+        SELECT u.nombre + ' ' + u.apellido + ' & '
+        FROM EDI.Usuarios u
+        WHERE u.id_usuario IN (f.papa_id, f.mama_id)
+          AND u.activo = 1
+        FOR XML PATH('')
+      ), 'Sin padres asignados') AS padres
+    FROM EDI.Familias_EDI f
+    WHERE f.activo = 0
+    ORDER BY f.nombre_familia
   `,
 
   byIdent: `

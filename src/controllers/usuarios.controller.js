@@ -338,3 +338,100 @@ exports.setImagenCumpleanos = (req, res) => {
   setImagenCumpleanos(imagen_url);
   ok(res, { ok: true, imagen: getImagenCumpleanos() });
 };
+
+exports.buscarPorIdent = async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    if (!q) return res.json([]);
+    const like = `%${q}%`;
+    const isNumeric = /^\d+$/.test(q);
+
+    let sqlText;
+    const params = { like: { type: sql.NVarChar, value: like } };
+
+    if (isNumeric) {
+      sqlText = `
+        SELECT u.id_usuario, u.nombre, u.apellido, u.correo, u.tipo_usuario,
+               u.matricula, u.num_empleado, u.id_rol, r.nombre_rol, u.foto_perfil
+        FROM EDI.Usuarios u
+        JOIN EDI.Roles r ON r.id_rol = u.id_rol
+        WHERE u.activo = 1
+          AND (CAST(u.matricula AS NVARCHAR) LIKE @like
+               OR CAST(u.num_empleado AS NVARCHAR) LIKE @like)
+        ORDER BY u.nombre
+      `;
+    } else {
+      sqlText = `
+        SELECT u.id_usuario, u.nombre, u.apellido, u.correo, u.tipo_usuario,
+               u.matricula, u.num_empleado, u.id_rol, r.nombre_rol, u.foto_perfil
+        FROM EDI.Usuarios u
+        JOIN EDI.Roles r ON r.id_rol = u.id_rol
+        WHERE u.activo = 1
+          AND (u.nombre LIKE @like OR u.apellido LIKE @like)
+        ORDER BY u.nombre
+      `;
+    }
+
+    const rows = await queryP(sqlText, params);
+    res.json(rows);
+  } catch (e) {
+    console.error('buscarPorIdent error:', e);
+    res.status(500).json([]);
+  }
+};
+
+exports.cambiarRol = async (req, res) => {
+  try {
+    const { id_usuario, id_rol } = req.body;
+    if (!id_usuario) return bad(res, 'Se requiere id_usuario');
+
+    // id_rol opcional: default 1 (Admin) para retrocompatibilidad
+    const targetRol = id_rol ? Number(id_rol) : 1;
+
+    const rows = await queryP(`
+      UPDATE EDI.Usuarios
+      SET id_rol = @id_rol, updated_at = GETDATE()
+      OUTPUT INSERTED.id_usuario AS IdUsuario,
+             INSERTED.nombre     AS Nombre,
+             INSERTED.apellido   AS Apellido,
+             INSERTED.correo     AS E_mail,
+             INSERTED.tipo_usuario AS TipoUsuario,
+             INSERTED.matricula  AS Matricula,
+             INSERTED.num_empleado AS NumEmpleado,
+             INSERTED.id_rol     AS IdRol
+      WHERE id_usuario = @id_usuario AND activo = 1
+    `, {
+      id_usuario: { type: sql.Int, value: Number(id_usuario) },
+      id_rol:     { type: sql.Int, value: targetRol },
+    });
+
+    if (!rows.length) return notFound(res);
+    const accion = targetRol === 1 ? 'ascendido a Admin' : `cambiado a rol ${targetRol}`;
+    console.log(`✅ Usuario ${id_usuario} ${accion}.`);
+    ok(res, rows[0]);
+  } catch (e) { fail(res, e); }
+};
+
+exports.listAdmins = async (_req, res) => {
+  try {
+    const rows = await queryP(`
+      SELECT u.id_usuario, u.nombre, u.apellido, u.correo,
+             u.tipo_usuario, u.matricula, u.num_empleado,
+             u.id_rol, r.nombre_rol, u.foto_perfil
+      FROM EDI.Usuarios u
+      JOIN EDI.Roles r ON r.id_rol = u.id_rol
+      WHERE u.activo = 1 AND r.nombre_rol = 'Admin'
+      ORDER BY u.nombre
+    `);
+    ok(res, rows);
+  } catch (e) { fail(res, e); }
+};
+
+exports.listRoles = async (_req, res) => {
+  try {
+    const rows = await queryP(
+      `SELECT id_rol, nombre_rol FROM EDI.Roles ORDER BY id_rol`
+    );
+    ok(res, rows);
+  } catch (e) { fail(res, e); }
+};

@@ -37,6 +37,12 @@ router.post('/cumpleanos/imagen',  auth, async (req, res) => {
   }
 });
 
+// Admin: búsqueda, cambio de rol, listados
+router.get('/buscar-por-ident', C.buscarPorIdent);
+router.get('/admins', auth, C.listAdmins);
+router.get('/roles', auth, C.listRoles);
+router.patch('/cambiar-rol', auth, C.cambiarRol);
+
 // Rutas con parámetro dinámico AL FINAL
 router.get('/:id', auth, C.get);
 router.post('/', validate(createUserSchema), C.create);

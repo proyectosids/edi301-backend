@@ -6,6 +6,44 @@ const { saveOptimizedImage } = require('../utils/imageStorage');
 const { enviarNotificacionMulticast } = require('../utils/firebase');
 const withBase = (tpl) => tpl.replace('{{BASE}}', Q.base);
 
+// ── Helpers de validación ──────────────────────────────────────────────────
+/** Devuelve la familia activa donde el usuario ya es padre/madre, o null */
+async function _padreEnOtraFamilia(userId, excludeId = null) {
+  if (!userId) return null;
+  const params = { uid: { type: sql.Int, value: Number(userId) } };
+  let q = `
+    SELECT TOP 1 id_familia, nombre_familia
+    FROM EDI.Familias_EDI
+    WHERE activo = 1 AND (papa_id = @uid OR mama_id = @uid)
+  `;
+  if (excludeId) {
+    q += ` AND id_familia <> @excl`;
+    params.excl = { type: sql.Int, value: Number(excludeId) };
+  }
+  const rows = await queryP(q, params);
+  return rows[0] ?? null;
+}
+
+/** Devuelve la familia activa donde el usuario ya es miembro (Miembros_Familia), o null */
+async function _usuarioEnOtraFamilia(userId, excludeFamiliaId = null) {
+  if (!userId) return null;
+  const params = { uid: { type: sql.Int, value: Number(userId) } };
+  let q = `
+    SELECT TOP 1 mf.id_familia, f.nombre_familia
+    FROM EDI.Miembros_Familia mf
+    JOIN EDI.Familias_EDI f ON f.id_familia = mf.id_familia
+    WHERE mf.id_usuario = @uid
+      AND mf.activo = 1
+      AND f.activo = 1
+  `;
+  if (excludeFamiliaId) {
+    q += ` AND mf.id_familia <> @excl`;
+    params.excl = { type: sql.Int, value: Number(excludeFamiliaId) };
+  }
+  const rows = await queryP(q, params);
+  return rows[0] ?? null;
+}
+
 exports.list = async (_req, res) => {
   try {
     const rows = await queryP(withBase(Q.list));
@@ -72,6 +110,31 @@ exports.create = async (req, res) => {
     const { nombre_familia, papa_id, mama_id, residencia, direccion, hijos = [] } = req.body;
     
     if (!nombre_familia || !residencia) return bad(res, 'Faltan datos obligatorios');
+
+    // Validar que los padres no estén asignados a otra familia activa
+    if (papa_id) {
+      const conflict = await _padreEnOtraFamilia(papa_id);
+      if (conflict) return bad(res, `El padre seleccionado ya pertenece a la familia "${conflict.nombre_familia}". Un padre no puede pertenecer a más de una familia.`);
+    }
+    if (mama_id) {
+      const conflict = await _padreEnOtraFamilia(mama_id);
+      if (conflict) return bad(res, `La madre seleccionada ya pertenece a la familia "${conflict.nombre_familia}". Una madre no puede pertenecer a más de una familia.`);
+    }
+
+    // Validar que los hijos no estén asignados a otra familia activa
+    if (Array.isArray(hijos) && hijos.length > 0) {
+      for (const hijoId of hijos) {
+        const conflict = await _usuarioEnOtraFamilia(hijoId);
+        if (conflict) {
+          return res.status(409).json({
+            ok: false,
+            error: `Un hijo seleccionado ya pertenece a la familia "${conflict.nombre_familia}". No puede estar en más de una familia.`,
+            nombre_familia_existente: conflict.nombre_familia,
+            id_familia_existente: conflict.id_familia,
+          });
+        }
+      }
+    }
 
     await transaction.begin();
     const request = new sql.Request(transaction);
@@ -177,7 +240,26 @@ exports.create = async (req, res) => {
 exports.update = async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { nombre_familia, papa_id, mama_id, residencia, direccion } = req.body;
+    const { nombre_familia, papa_id, mama_id, residencia, direccion, descripcion } = req.body;
+
+    // Si cambia a EXTERNA debe venir dirección
+    if (residencia === 'EXTERNA' && (!direccion || direccion.trim().length < 5)) {
+      return bad(res, 'La dirección es obligatoria cuando la residencia es EXTERNA (mínimo 5 caracteres).');
+    }
+
+    // Validar que los padres no estén asignados a otra familia activa (excluir la actual)
+    if (papa_id) {
+      const conflict = await _padreEnOtraFamilia(papa_id, id);
+      if (conflict) return bad(res, `El padre seleccionado ya pertenece a la familia "${conflict.nombre_familia}".`);
+    }
+    if (mama_id) {
+      const conflict = await _padreEnOtraFamilia(mama_id, id);
+      if (conflict) return bad(res, `La madre seleccionada ya pertenece a la familia "${conflict.nombre_familia}".`);
+    }
+
+    // Las familias INTERNAS nunca deben tener dirección (constraint DB)
+    // Forzar null explícito para evitar que COALESCE preserve la dirección anterior
+    const finalDireccion = (residencia === 'INTERNA') ? null : (direccion ?? null);
 
     await queryP(Q.update, {
       id_familia:     { type: sql.Int,      value: id },
@@ -185,7 +267,8 @@ exports.update = async (req, res) => {
       papa_id:        { type: sql.Int,      value: papa_id ?? null },
       mama_id:        { type: sql.Int,      value: mama_id ?? null },
       residencia:     { type: sql.NVarChar, value: residencia ?? null },
-      direccion:      { type: sql.NVarChar, value: direccion ?? null },
+      direccion:      { type: sql.NVarChar, value: finalDireccion },
+      descripcion:    { type: sql.NVarChar, value: descripcion ?? null },
     });
 
     const rows = await queryP(withBase(Q.byId), {
@@ -193,7 +276,13 @@ exports.update = async (req, res) => {
     });
     if (!rows.length) return notFound(res);
     ok(res, rows[0]);
-  } catch (e) { fail(res, e); }
+  } catch (e) {
+    // Constraint de dirección requerida para EXTERNA
+    if (e.number === 547 && e.message?.includes('CK_FamiliasEDI_DireccionExterna')) {
+      return bad(res, 'La dirección es obligatoria cuando la residencia es EXTERNA.');
+    }
+    fail(res, e);
+  }
 };
 
 exports.remove = async (req, res) => {
@@ -202,6 +291,47 @@ exports.remove = async (req, res) => {
       id_familia: { type: sql.Int, value: Number(req.params.id) },
     });
     ok(res, { message: 'Familia desactivada' });
+  } catch (e) { fail(res, e); }
+};
+
+exports.listInactive = async (_req, res) => {
+  try {
+    const rows = await queryP(Q.listInactive);
+    // Limpiar el " & " sobrante al final del string de padres
+    const formatted = rows.map(f => ({
+      ...f,
+      padres: (f.padres && f.padres.endsWith(' & '))
+        ? f.padres.slice(0, -3)
+        : (f.padres || 'Sin padres asignados'),
+    }));
+    ok(res, formatted);
+  } catch (e) { fail(res, e); }
+};
+
+exports.reactivate = async (req, res) => {
+  try {
+    await queryP(Q.reactivate, {
+      id_familia: { type: sql.Int, value: Number(req.params.id) },
+    });
+    ok(res, { message: 'Familia reactivada' });
+  } catch (e) { fail(res, e); }
+};
+
+exports.permanentDelete = async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    // Eliminar miembros primero (FK constraint)
+    await queryP(
+      `DELETE FROM EDI.Miembros_Familia WHERE id_familia = @id`,
+      { id: { type: sql.Int, value: id } }
+    );
+    // Eliminar la familia
+    await queryP(
+      `DELETE FROM EDI.Familias_EDI WHERE id_familia = @id`,
+      { id: { type: sql.Int, value: id } }
+    );
+    console.log(`🗑️  Familia ${id} eliminada permanentemente.`);
+    ok(res, { message: 'Familia eliminada permanentemente' });
   } catch (e) { fail(res, e); }
 };
 
