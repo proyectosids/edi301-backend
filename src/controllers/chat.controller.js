@@ -153,15 +153,37 @@ exports.getMyChats = async (req, res) => {
     } catch (e) { fail(res, e); }
 };
 
+// TOTAL DE MENSAJES NO LEÍDOS (para el badge del menú)
+exports.totalUnread = async (req, res) => {
+    try {
+        const myId = req.user.id_usuario ?? req.user.id;
+        const rows = await queryP(Q.totalUnread, { id_usuario: { type: sql.Int, value: myId } });
+        ok(res, { total: rows[0]?.total ?? 0 });
+    } catch (e) { fail(res, e); }
+};
+
+// MARCAR SALA COMO LEÍDA
+exports.markRead = async (req, res) => {
+    try {
+        const myId = req.user.id_usuario ?? req.user.id;
+        const idSala = Number(req.params.id_sala);
+        await queryP(Q.markRead, {
+            id_sala:    { type: sql.Int, value: idSala },
+            id_usuario: { type: sql.Int, value: myId },
+        });
+        ok(res, { ok: true });
+    } catch (e) { fail(res, e); }
+};
+
 // VER MENSAJES DE UNA SALA
 exports.getMessages = async (req, res) => {
     try {
         const myId = req.user.id_usuario ?? req.user.id;
         const idSala = req.params.id_sala;
-        
-        const rows = await queryP(Q.getMensajes, { 
+
+        const rows = await queryP(Q.getMensajes, {
             id_sala: { type: sql.Int, value: idSala },
-            id_usuario: { type: sql.Int, value: myId } 
+            id_usuario: { type: sql.Int, value: myId }
         });
         ok(res, rows);
     } catch (e) { fail(res, e); }

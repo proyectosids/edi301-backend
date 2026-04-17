@@ -15,6 +15,7 @@ router.use('/provisiones', require('./provisiones.routes'));
 router.use('/detalle-provision', require('./det_provisiones.routes')); 
 router.use('/roles', require('./roles.routes'));
 router.use('/search', require('./search.routes'));
+router.use('/notificaciones', require('./notificaciones.routes'));
 
 
 module.exports = router;

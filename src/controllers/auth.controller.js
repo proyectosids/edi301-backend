@@ -48,6 +48,27 @@ exports.logout = async (req, res) => {
   } catch (e) { fail(res, e); }
 };
 
+exports.verificarCorreo = async (req, res) => {
+  try {
+    const { correo } = req.body;
+    if (!correo) return bad(res, 'El correo es obligatorio');
+
+    const rows = await queryP(
+      `SELECT id_usuario FROM EDI.Usuarios WHERE correo = @correo`,
+      { correo: { type: sql.NVarChar, value: correo } }
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ ok: false, error: 'No existe una cuenta registrada con ese correo.' });
+    }
+
+    ok(res, { existe: true });
+  } catch (e) {
+    console.error('verificarCorreo error:', e);
+    fail(res, e);
+  }
+};
+
 exports.resetPassword = async (req, res) => {
   try {
     const { correo, nuevaContrasena } = req.body;
