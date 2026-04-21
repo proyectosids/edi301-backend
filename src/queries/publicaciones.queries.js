@@ -1,7 +1,7 @@
 exports.Q = {
   create: `
     INSERT INTO EDI.Publicaciones (id_familia, id_usuario, categoria_post, mensaje, url_imagen, estado, tipo, activo, created_at)
-    VALUES (@id_familia, @id_usuario, @categoria_post, @mensaje, @url_imagen, @estado, @tipo, 1, GETDATE());
+    VALUES (@id_familia, @id_usuario, @categoria_post, @mensaje, @url_imagen, @estado, @tipo, 1, GETUTCDATE());
     
     SELECT * FROM EDI.Publicaciones WHERE id_post = SCOPE_IDENTITY();
   `,
@@ -181,5 +181,83 @@ exports.Q = {
   SELECT id_usuario, nombre, apellido
   FROM EDI.Usuarios
   WHERE id_usuario = @id_usuario
+`,
+
+  // Todos los padres/tutores de una familia (con o sin FCM token).
+  // Cubre Miembros_Familia Y los vínculos directos papa_id/mama_id en Familias_EDI.
+  getParentsByFamilia: `
+  SELECT DISTINCT u.id_usuario, u.fcm_token
+  FROM EDI.Usuarios u
+  JOIN EDI.Roles r ON r.id_rol = u.id_rol
+  WHERE u.activo = 1
+    AND r.nombre_rol IN ('Padre', 'Madre', 'Tutor', 'Admin', 'PapaEDI', 'MamaEDI')
+    AND (
+      EXISTS (
+        SELECT 1 FROM EDI.Miembros_Familia mf
+        WHERE mf.id_usuario = u.id_usuario
+          AND mf.id_familia = @id_familia
+          AND mf.activo = 1
+      )
+      OR
+      EXISTS (
+        SELECT 1 FROM EDI.Familias_EDI f
+        WHERE f.id_familia = @id_familia
+          AND (f.papa_id = u.id_usuario OR f.mama_id = u.id_usuario)
+      )
+    )
+`,
+
+  // Todos los miembros activos de una familia, excluyendo uno.
+  // Cubre Miembros_Familia Y los vínculos directos papa_id/mama_id en Familias_EDI.
+  getAllFamilyMembers: `
+  SELECT DISTINCT u.id_usuario
+  FROM EDI.Usuarios u
+  WHERE u.activo = 1
+    AND u.id_usuario <> @id_usuario_excluir
+    AND (
+      EXISTS (
+        SELECT 1 FROM EDI.Miembros_Familia mf
+        WHERE mf.id_usuario = u.id_usuario
+          AND mf.id_familia = @id_familia
+          AND mf.activo = 1
+      )
+      OR
+      EXISTS (
+        SELECT 1 FROM EDI.Familias_EDI f
+        WHERE f.id_familia = @id_familia
+          AND (f.papa_id = u.id_usuario OR f.mama_id = u.id_usuario)
+      )
+    )
+`,
+
+  // Posts pendientes de aprobación para el padre/tutor actual.
+  // Cubre DOS mecanismos de vinculación a una familia:
+  //   1. EDI.Miembros_Familia  → tutores externos y miembros añadidos manualmente
+  //   2. EDI.Familias_EDI (papa_id / mama_id) → padres vinculados directamente a la familia
+  // No necesita que el cliente conozca el id_familia.
+  getMisPendientes: `
+  SELECT DISTINCT p.*, u.nombre, u.apellido, u.foto_perfil
+  FROM EDI.Publicaciones p
+  JOIN EDI.Usuarios u ON u.id_usuario = p.id_usuario
+  WHERE p.estado = 'Pendiente'
+    AND p.activo = 1
+    AND p.id_familia IS NOT NULL
+    AND (
+      EXISTS (
+        SELECT 1
+        FROM EDI.Miembros_Familia mf
+        WHERE mf.id_familia = p.id_familia
+          AND mf.id_usuario  = @id_usuario
+          AND mf.activo      = 1
+      )
+      OR
+      EXISTS (
+        SELECT 1
+        FROM EDI.Familias_EDI f
+        WHERE f.id_familia = p.id_familia
+          AND (f.papa_id = @id_usuario OR f.mama_id = @id_usuario)
+      )
+    )
+  ORDER BY p.created_at DESC
 `,
 };

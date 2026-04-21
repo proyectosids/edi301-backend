@@ -57,15 +57,27 @@ exports.get = async (req, res) => {
     const rows = await queryP(withBase(Q.byId), {
       id_familia: { type: sql.Int, value: id_familia },
     });
-    
+
     if (!rows.length) return notFound(res);
-    
+
     const familia = rows[0];
-    const miembros = await queryP(MiembrosQ.listByFamilia, {
-      id_familia: { type: sql.Int, value: id_familia },
-    });
+
+    const [miembros, hijosHogar] = await Promise.all([
+      queryP(MiembrosQ.listByFamilia, {
+        id_familia: { type: sql.Int, value: id_familia },
+      }),
+      queryP(
+        `SELECT id_hijo, nombre, apellido,
+                CONVERT(varchar(10), fecha_nacimiento, 23) AS fecha_nacimiento
+         FROM EDI.Hijos_Hogar
+         WHERE id_familia = @id AND activo = 1
+         ORDER BY nombre, apellido`,
+        { id: { type: sql.Int, value: id_familia } }
+      ).catch(() => []),   // si la tabla aún no existe no rompe
+    ]);
 
     familia.miembros = miembros;
+    familia.hijos_hogar = hijosHogar;
     ok(res, familia);
   } catch (e) { fail(res, e); }
 };
@@ -185,7 +197,7 @@ exports.create = async (req, res) => {
             for (const p of padresData) {
                 await queryP(`
                     INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
-                    VALUES (@uid, @tit, @body, @tipo, @ref, 0, GETDATE())
+                    VALUES (@uid, @tit, @body, @tipo, @ref, 0, GETUTCDATE())
                 `, {
                     uid: { type: sql.Int, value: p.id_usuario },
                     tit: { type: sql.NVarChar, value: '¡Familia Creada! 🏠' },
@@ -210,7 +222,7 @@ exports.create = async (req, res) => {
             for (const h of hijosData) {
                 await queryP(`
                     INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
-                    VALUES (@uid, @tit, @body, @tipo, @ref, 0, GETDATE())
+                    VALUES (@uid, @tit, @body, @tipo, @ref, 0, GETUTCDATE())
                 `, {
                     uid: { type: sql.Int, value: h.id_usuario },
                     tit: { type: sql.NVarChar, value: 'Nueva Asignación 🎒' },
@@ -362,6 +374,7 @@ exports.reporteCompleto = async (_req, res) => {
           mama_nombre: row.mama_nombre,
           hijos_en_casa: [],
           alumnos_asignados: [],
+          ninos_hogar_count: row.ninos_hogar_count ?? 0,
           total_miembros: 0
         });
       }
@@ -384,6 +397,7 @@ exports.reporteCompleto = async (_req, res) => {
        if (familia.mama_nombre) count++;
        count += familia.hijos_en_casa.length;
        count += familia.alumnos_asignados.length;
+       count += familia.ninos_hogar_count ?? 0;
        familia.total_miembros = count;
     });
 

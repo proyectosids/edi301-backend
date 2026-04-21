@@ -47,6 +47,26 @@ exports.create = async (req, res) => {
   }
 };
 
+exports.unreadCount = async (req, res) => {
+  try {
+    const id_usuario = req.user.id_usuario ?? req.user.id;
+    const { id_familia } = req.params;
+    const { desde } = req.query;
+
+    const desdeDate = desde ? new Date(desde) : new Date('1900-01-01T00:00:00Z');
+
+    const result = await queryP(Q.countUnread, {
+      id_familia: { type: sql.Int,      value: Number(id_familia) },
+      id_usuario: { type: sql.Int,      value: id_usuario },
+      desde:      { type: sql.DateTime, value: desdeDate },
+    });
+
+    ok(res, { total: result[0]?.total ?? 0 });
+  } catch (e) {
+    fail(res, e);
+  }
+};
+
 exports.listByFamilia = async (req, res) => {
   try {
     const rows = await queryP(Q.listByFamilia, {

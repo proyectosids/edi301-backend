@@ -24,12 +24,21 @@ exports.Q = {
   `,
 
   getFamilyTokens: `
-    SELECT u.fcm_token 
+    SELECT u.fcm_token
     FROM EDI.Usuarios u
     JOIN EDI.Miembros_Familia mf ON mf.id_usuario = u.id_usuario
-    WHERE mf.id_familia = @id_familia 
-      AND u.id_usuario != @id_sender 
-      AND u.activo = 1 
+    WHERE mf.id_familia = @id_familia
+      AND u.id_usuario != @id_sender
+      AND u.activo = 1
       AND u.fcm_token IS NOT NULL
+  `,
+
+  countUnread: `
+    SELECT COUNT(*) AS total
+    FROM EDI.Mensajes_Chat
+    WHERE id_familia = @id_familia
+      AND id_usuario != @id_usuario
+      AND activo = 1
+      AND created_at > @desde
   `
 };

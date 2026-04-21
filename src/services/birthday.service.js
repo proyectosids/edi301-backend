@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const { sql, queryP } = require('../dataBase/dbConnection');
 const { enviarNotificacionMulticast } = require('../utils/firebase');
+const { insertarNotificacion } = require('../utils/notificaciones');
 const ID_AUTOR_SISTEMA = 1; 
 let IMAGEN_CUMPLEANOS = '/uploads/image.png';
 const getImagenCumpleanos = () => IMAGEN_CUMPLEANOS;
@@ -87,6 +88,24 @@ const verificarCumpleanos = async () => {
             { tipo: 'POST_DETALLE', id_referencia: idPost.toString() }
           );
         }
+
+        // Insertar notificación CUMPLEANOS en historial para cada familiar
+        const familiaresTodos = await queryP(`
+          SELECT u.id_usuario
+          FROM EDI.Usuarios u
+          INNER JOIN EDI.Miembros_Familia mf ON mf.id_usuario = u.id_usuario AND mf.activo = 1
+          WHERE mf.id_familia = @idFam AND u.activo = 1
+        `, { idFam: { type: sql.Int, value: user.id_familia } });
+
+        for (const f of familiaresTodos) {
+          await insertarNotificacion(
+            f.id_usuario,
+            '🎉 ¡Cumpleaños en la familia!',
+            `Hoy es el cumpleaños de ${nombreCompleto}. ¡Entra a felicitarlo!`,
+            'CUMPLEANOS',
+            idPost
+          );
+        }
       }
     }
 
@@ -155,13 +174,25 @@ const enviarRecordatorioOracion = async () => {
     }
 
     console.log(`🙏 Recordatorio de oración enviado a ${tokens.length} dispositivos.`);
+
+    // Insertar notificación ORACION en historial para todos los usuarios activos
+    const allUsers = await queryP(`SELECT id_usuario FROM EDI.Usuarios WHERE activo = 1`);
+    for (const u of allUsers) {
+      await insertarNotificacion(
+        u.id_usuario,
+        '🕛 Momento de oración',
+        frase,
+        'ORACION',
+        null
+      );
+    }
   } catch (error) {
     console.error('Error en recordatorio de oración:', error);
   }
 };
 
 const initCronJobs = () => {
-  cron.schedule('* 8 * * *', () => {
+  cron.schedule('0 8 * * *', () => {
     verificarCumpleanos();
   }, { timezone: "America/Mexico_City" });
 

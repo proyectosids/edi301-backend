@@ -12,12 +12,14 @@ exports.Q = {
       f.descripcion, 
       (p.nombre + ' ' + p.apellido) AS papa_nombre,
       (m.nombre + ' ' + m.apellido) AS mama_nombre,
-      p.num_empleado AS papa_num_empleado,
-      m.num_empleado AS mama_num_empleado,
-      p.telefono AS papa_telefono,
-      m.telefono AS mama_telefono,
-      p.foto_perfil AS papa_foto_perfil_url,
-      m.foto_perfil AS mama_foto_perfil_url
+      p.num_empleado     AS papa_num_empleado,
+      m.num_empleado     AS mama_num_empleado,
+      p.telefono         AS papa_telefono,
+      m.telefono         AS mama_telefono,
+      p.foto_perfil      AS papa_foto_perfil_url,
+      m.foto_perfil      AS mama_foto_perfil_url,
+      p.fecha_nacimiento AS papa_fecha_nacimiento,
+      m.fecha_nacimiento AS mama_fecha_nacimiento
 
     FROM EDI.Familias_EDI AS f
     LEFT JOIN EDI.Usuarios AS p ON p.id_usuario = f.papa_id
@@ -72,7 +74,9 @@ exports.Q = {
       f.residencia,
       f.descripcion,
       (SELECT COUNT(*) FROM EDI.Miembros_Familia mf
-       WHERE mf.id_familia = f.id_familia AND mf.activo = 1) AS num_miembros,
+       WHERE mf.id_familia = f.id_familia
+         AND mf.activo = 1
+         AND mf.tipo_miembro = 'ALUMNO_ASIGNADO') AS num_miembros,
       ISNULL((
         SELECT u.nombre + ' ' + u.apellido + ' & '
         FROM EDI.Usuarios u
@@ -106,12 +110,14 @@ exports.Q = {
       (m.nombre + ' ' + m.apellido) AS mama_nombre,
       miembros.id_usuario,
       (u.nombre + ' ' + u.apellido) AS miembro_nombre,
-      miembros.tipo_miembro
+      miembros.tipo_miembro,
+      (SELECT COUNT(*) FROM EDI.Hijos_Hogar hh
+       WHERE hh.id_familia = f.id_familia AND hh.activo = 1) AS ninos_hogar_count
     FROM EDI.Familias_EDI AS f
     LEFT JOIN EDI.Usuarios AS p ON p.id_usuario = f.papa_id
     LEFT JOIN EDI.Usuarios AS m ON m.id_usuario = f.mama_id
     LEFT JOIN EDI.Miembros_Familia AS miembros ON miembros.id_familia = f.id_familia
-                                              AND miembros.activo = 1 
+                                              AND miembros.activo = 1
                                               AND miembros.tipo_miembro IN ('HIJO', 'ALUMNO_ASIGNADO')
     LEFT JOIN EDI.Usuarios AS u ON u.id_usuario = miembros.id_usuario
     WHERE f.activo = 1
@@ -134,12 +140,10 @@ listAvailable: `
     f.foto_portada_url AS portada,
     f.residencia,
     f.descripcion,
-    (SELECT COUNT(*) FROM EDI.Miembros_Familia mf 
-     JOIN EDI.Usuarios u ON mf.id_usuario = u.id_usuario
-     JOIN EDI.Roles r ON u.id_rol = r.id_rol
-     WHERE mf.id_familia = f.id_familia 
-       AND r.nombre_rol NOT IN ('Padre', 'Madre', 'Tutor', 'PapaEDI', 'MamaEDI')
-       AND mf.activo = 1) as num_alumnos,
+    (SELECT COUNT(*) FROM EDI.Miembros_Familia mf
+     WHERE mf.id_familia = f.id_familia
+       AND mf.activo = 1
+       AND mf.tipo_miembro = 'ALUMNO_ASIGNADO') as num_alumnos,
     ISNULL((
       SELECT u.nombre + ' ' + u.apellido + ' & '
       FROM EDI.Usuarios u

@@ -214,7 +214,7 @@ async function _enviarNotificacionesBulk(id_familia, id_usuarios, nombreFamilia)
 
         for (const u of usersData) {
             queryP(`INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
-                    VALUES (@uid, @tit, @body, 'ASIGNACION', @ref, 0, GETDATE())`, {
+                    VALUES (@uid, @tit, @body, 'ASIGNACION', @ref, 0, GETUTCDATE())`, {
                 uid: { type: sql.Int, value: u.id_usuario },
                 tit: { type: sql.NVarChar, value: 'Nueva Asignación 🎒' },
                 body: { type: sql.NVarChar, value: `Has sido asignado a la familia "${nombreFamilia}".` },
@@ -235,7 +235,7 @@ async function _enviarNotificacionesAlumnos(id_familia, usersNotif, nombreFamili
         const tit = 'Nueva Asignación 🎒';
         const body = `Has sido asignado a la ${nombreFamilia}.`;
         queryP(`INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
-                VALUES (@uid, @tit, @body, 'ASIGNACION', @ref, 0, GETDATE())`, {
+                VALUES (@uid, @tit, @body, 'ASIGNACION', @ref, 0, GETUTCDATE())`, {
             uid: { type: sql.Int, value: u.id_usuario },
             tit: { type: sql.NVarChar, value: tit },
             body: { type: sql.NVarChar, value: body },
@@ -257,7 +257,7 @@ async function _enviarNotificacionesAlumnos(id_familia, usersNotif, nombreFamili
         const tokensP = [];
         for (const p of padres) {
             queryP(`INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
-                    VALUES (@uid, 'Nuevos Miembros 👶', @body, 'NUEVO_MIEMBRO', @ref, 0, GETDATE())`, {
+                    VALUES (@uid, 'Nuevos Miembros 👶', @body, 'NUEVO_MIEMBRO', @ref, 0, GETUTCDATE())`, {
                 uid: { type: sql.Int, value: p.id_usuario },
                 body: { type: sql.NVarChar, value: `Se han asignado ${cantidad} nuevos alumnos a tu familia.` },
                 ref: { type: sql.Int, value: id_familia }

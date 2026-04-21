@@ -26,6 +26,7 @@ const ROLES_ADMIN = [
 
 
 router.get('/mis-posts', authGuard, C.listByUsuario);
+router.get('/mis-pendientes', authGuard, roleGuard(...ROLES_ADMIN), C.misPendientes);
 
 
 router.post('/', authGuard, roleGuard(...ROLES_ACCESO_APP), validate(createPublicacion), C.create);

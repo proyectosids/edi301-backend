@@ -1,7 +1,8 @@
 const { sql, queryP } = require('../dataBase/dbConnection');
 const { ok, created, bad, fail } = require('../utils/http');
 const { Q } = require('../queries/chat.queries');
-const { enviarNotificacionMulticast } = require('../utils/firebase'); // ✅ Importamos la utilidad
+const { enviarNotificacionMulticast } = require('../utils/firebase');
+const { insertarNotificacion } = require('../utils/notificaciones');
 
 // INICIAR CHAT PRIVADO
 exports.initPrivateChat = async (req, res) => {
@@ -109,20 +110,31 @@ async function _sendPushToRoom(idSala, senderId, senderName, messageText) {
 
         console.log(`📲 Push sala=${idSala}: ${rows.length} destinatario(s) con token`);
 
+        // Insertar notificación MENSAJE en historial para cada destinatario
+        // (independiente de si tienen token o no)
+        const queryAllRecipients = `
+            SELECT u.id_usuario, u.fcm_token
+            FROM EDI.Chat_Participantes cp
+            JOIN EDI.Usuarios u ON u.id_usuario = cp.id_usuario
+            WHERE cp.id_sala = @idSala AND cp.id_usuario != @senderId
+        `;
+        const allRecipients = await queryP(queryAllRecipients, {
+            idSala: { type: sql.Int, value: idSala },
+            senderId: { type: sql.Int, value: senderId }
+        });
+
+        for (const r of allRecipients) {
+            await insertarNotificacion(
+                r.id_usuario,
+                senderName,
+                messageText.length > 100 ? messageText.substring(0, 100) + '...' : messageText,
+                'MENSAJE',
+                idSala
+            );
+        }
+
         if (rows.length === 0) {
-            // Diagnóstico extra: verificar si hay participantes sin token
-            const queryAll = `
-                SELECT u.id_usuario,
-                       CASE WHEN u.fcm_token IS NULL THEN 'SIN_TOKEN' ELSE 'CON_TOKEN' END as estado_token
-                FROM EDI.Chat_Participantes cp
-                JOIN EDI.Usuarios u ON u.id_usuario = cp.id_usuario
-                WHERE cp.id_sala = @idSala AND cp.id_usuario != @senderId
-            `;
-            const allRows = await queryP(queryAll, {
-                idSala: { type: sql.Int, value: idSala },
-                senderId: { type: sql.Int, value: senderId }
-            });
-            console.log(`⚠️ Participantes restantes en sala ${idSala}:`, allRows);
+            console.log(`⚠️ Sala ${idSala}: sin participantes con token FCM.`);
             return;
         }
 

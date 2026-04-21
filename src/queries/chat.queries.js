@@ -65,7 +65,7 @@ WHERE m.id_mensaje = @id_mensaje;
         FROM EDI.Chat_Mensajes m2
         WHERE m2.id_sala = s.id_sala
           AND m2.id_usuario <> @id_usuario
-          AND m2.created_at > ISNULL(cp.ultima_lectura, GETDATE())
+          AND m2.created_at > ISNULL(cp.ultima_lectura, '1900-01-01')
       ) as unread_count
 
   FROM EDI.Chat_Salas s
@@ -116,7 +116,7 @@ WHERE m.id_mensaje = @id_mensaje;
        FROM EDI.Chat_Mensajes m
        WHERE m.id_sala = cp.id_sala
          AND m.id_usuario <> @id_usuario
-         AND m.created_at > ISNULL(cp.ultima_lectura, GETDATE())
+         AND m.created_at > ISNULL(cp.ultima_lectura, '1900-01-01')
       )
     ), 0) AS total
     FROM EDI.Chat_Participantes cp

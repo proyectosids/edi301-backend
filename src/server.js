@@ -1,5 +1,10 @@
 // src/server.js
-require('dotenv').config(); 
+// ── Forzar UTC en todo el proceso Node.js ──────────────────────────────────
+// Esto asegura que mssql interprete las fechas de SQL Server como UTC,
+// y que Date.toISOString() / res.json() serialice correctamente en producción.
+process.env.TZ = 'UTC';
+
+require('dotenv').config();
 const app = require('./app');
 const http = require('http');
 const { Server } = require('socket.io');
