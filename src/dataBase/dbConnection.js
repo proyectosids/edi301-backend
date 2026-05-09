@@ -1,5 +1,8 @@
 const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
+// El .env vive en la raíz del proyecto. server.js ya lo carga al arrancar,
+// pero lo hacemos también aquí por si alguna utilidad importa este módulo
+// directamente (scripts, tests).
+require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 const sql = require('mssql');
 
 

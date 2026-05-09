@@ -4,12 +4,14 @@ const { newSessionToken } = require('../utils/token');
 const { ok, bad, fail } = require('../utils/http');
 const UQ = require('../queries/usuarios.queries').Q;
 
+// Límite de sesiones simultáneas por usuario.
+// Cuando el usuario hace login en un (N+1)-ésimo dispositivo, se cierra
+// automáticamente la sesión más antigua para mantener el límite.
+const MAX_SESIONES_POR_USUARIO = 5;
+
 exports.login = async (req, res) => {
   try {
-    console.log("Headers recibidos:", req.headers['content-type']);
-    console.log("Body CRUDO recibido:", req.body); 
-
-    const { login, password } = req.body || {};
+    const { login, password, device_info, device_id, platform } = req.body || {};
 
     if (!login || !password) {
         return bad(res, 'Faltan datos: login o password');
@@ -19,22 +21,45 @@ exports.login = async (req, res) => {
     if (!rows.length) return bad(res, 'Usuario no encontrado');
 
     const user = rows[0];
+
+    // Bloquear inicio de sesión a cuentas desactivadas (eliminadas por el usuario).
+    if (user.activo === false || user.activo === 0) {
+      return bad(res, 'Esta cuenta fue eliminada. Si lo deseas, puedes registrarte de nuevo con el mismo correo.');
+    }
+
     const okPass = await comparePassword(password, user.contrasena);
     if (!okPass) return bad(res, 'Contraseña incorrecta');
 
+    // Generar token y crear una sesión NUEVA en EDI.Usuario_Sesiones
+    // (multi-dispositivo: no se sobrescribe la sesión anterior).
     const token = newSessionToken();
-    await queryP(UQ.updateSession, {
-      token: { type: sql.NVarChar, value: token },
-      id_usuario: { type: sql.Int, value: user.id_usuario }
+    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')
+                  .toString().split(',')[0].trim().slice(0, 45);
+
+    await queryP(UQ.insertSession, {
+      id_usuario:    { type: sql.Int,      value: user.id_usuario },
+      session_token: { type: sql.NVarChar, value: token },
+      fcm_token:     { type: sql.NVarChar, value: null },
+      device_info:   { type: sql.NVarChar, value: (device_info || null) },
+      device_id:     { type: sql.NVarChar, value: (device_id   || null) },
+      platform:      { type: sql.NVarChar, value: (platform    || null) },
+      ip_address:    { type: sql.NVarChar, value: ip || null },
+    });
+
+    // Aplicar el límite de sesiones simultáneas: cierra las más antiguas
+    // si el usuario ya superó el máximo permitido.
+    await queryP(UQ.evictOldestSessions, {
+      id_usuario: { type: sql.Int, value: user.id_usuario },
+      keep:       { type: sql.Int, value: MAX_SESIONES_POR_USUARIO },
     });
 
     delete user.contrasena;
     user.session_token = token;
     ok(res, user);
 
-  } catch (e) { 
+  } catch (e) {
     console.error("Login Error:", e);
-    fail(res, e); 
+    fail(res, e);
   }
 };
 
@@ -43,7 +68,11 @@ exports.logout = async (req, res) => {
   try {
     const token = (req.headers.authorization || '').replace('Bearer ','').trim();
     if (!token) return bad(res, 'Token requerido');
-    await queryP(UQ.clearToken, { token: { type: sql.NVarChar, value: token } });
+    // Marca como inactiva SOLO la sesión actual (otros dispositivos del mismo
+    // usuario siguen vivos).
+    await queryP(UQ.deactivateSessionByToken, {
+      session_token: { type: sql.NVarChar, value: token },
+    });
     ok(res, { message: 'Sesión cerrada' });
   } catch (e) { fail(res, e); }
 };

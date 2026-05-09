@@ -4,6 +4,7 @@ const { Q } = require('../queries/familias.queries');
 const MiembrosQ = require('../queries/miembros.queries').Q;
 const { saveOptimizedImage } = require('../utils/imageStorage');
 const { enviarNotificacionMulticast } = require('../utils/firebase');
+const { getActiveFcmTokensForUsers } = require('../utils/sessions');
 const withBase = (tpl) => tpl.replace('{{BASE}}', Q.base);
 
 // ── Helpers de validación ──────────────────────────────────────────────────
@@ -191,51 +192,48 @@ exports.create = async (req, res) => {
     try {
         const idsPadres = [papa_id, mama_id].filter(id => id);
         if (idsPadres.length > 0) {
-            const padresData = await queryP(`SELECT id_usuario, fcm_token FROM EDI.Usuarios WHERE id_usuario IN (${idsPadres.join(',')})`);
-            const tokensPadres = [];
-
-            for (const p of padresData) {
+            // Insertar UNA fila de notificación por usuario.
+            for (const idPadre of idsPadres) {
                 await queryP(`
                     INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
                     VALUES (@uid, @tit, @body, @tipo, @ref, 0, GETUTCDATE())
                 `, {
-                    uid: { type: sql.Int, value: p.id_usuario },
+                    uid: { type: sql.Int, value: Number(idPadre) },
                     tit: { type: sql.NVarChar, value: '¡Familia Creada! 🏠' },
                     body: { type: sql.NVarChar, value: `Bienvenidos a la familia "${nombre_familia}".` },
                     tipo: { type: sql.NVarChar, value: 'FAMILIA_CREADA' },
                     ref: { type: sql.Int, value: id_familia }
                 }).catch(e => console.error("Error BD Notif Padre:", e.message));
-
-                if (p.fcm_token) tokensPadres.push(p.fcm_token);
             }
 
+            // Multi-dispositivo: obtener fcm_tokens de TODAS las sesiones
+            // activas de los padres y mandar push a cada device.
+            const tokensPadres = await getActiveFcmTokensForUsers(idsPadres);
             if (tokensPadres.length > 0) {
-                enviarNotificacionMulticast(tokensPadres, '¡Familia Creada! 🏠', `Bienvenidos a la familia "${nombre_familia}".`, 
+                enviarNotificacionMulticast(tokensPadres, '¡Familia Creada! 🏠', `Bienvenidos a la familia "${nombre_familia}".`,
                 { tipo: 'FAMILIA_CREADA', id_familia: id_familia.toString() });
             }
         }
 
         if (hijos.length > 0) {
-            const hijosData = await queryP(`SELECT id_usuario, fcm_token FROM EDI.Usuarios WHERE id_usuario IN (${hijos.join(',')})`);
-            const tokensHijos = [];
-
-            for (const h of hijosData) {
+            // Insertar UNA fila de notificación por hijo.
+            for (const idHijo of hijos) {
                 await queryP(`
                     INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
                     VALUES (@uid, @tit, @body, @tipo, @ref, 0, GETUTCDATE())
                 `, {
-                    uid: { type: sql.Int, value: h.id_usuario },
+                    uid: { type: sql.Int, value: Number(idHijo) },
                     tit: { type: sql.NVarChar, value: 'Nueva Asignación 🎒' },
                     body: { type: sql.NVarChar, value: `Has sido asignado a la familia "${nombre_familia}".` },
                     tipo: { type: sql.NVarChar, value: 'ASIGNACION' },
                     ref: { type: sql.Int, value: id_familia }
                 }).catch(e => console.error("Error BD Notif Hijo:", e.message));
-
-                if (h.fcm_token) tokensHijos.push(h.fcm_token);
             }
 
+            // Multi-dispositivo: fan-out a todas las sesiones activas de cada hijo.
+            const tokensHijos = await getActiveFcmTokensForUsers(hijos);
             if (tokensHijos.length > 0) {
-                enviarNotificacionMulticast(tokensHijos, 'Nueva Asignación 🎒', `Has sido asignado a la familia "${nombre_familia}".`, 
+                enviarNotificacionMulticast(tokensHijos, 'Nueva Asignación 🎒', `Has sido asignado a la familia "${nombre_familia}".`,
                 { tipo: 'ASIGNACION', id_familia: id_familia.toString() });
             }
         }

@@ -13,16 +13,21 @@ exports.Q = {
     WHERE u.id_usuario = @id_usuario
   `,
 
+  // Multi-dispositivo: regresa el fcm_token de TODAS las sesiones activas
+  // de los padres/tutores de la familia.
   getTokensPadres: `
-    SELECT u.fcm_token 
-    FROM EDI.Usuarios u
+    SELECT s.fcm_token
+    FROM EDI.Usuario_Sesiones s
+    JOIN EDI.Usuarios u ON u.id_usuario = s.id_usuario
     JOIN EDI.Miembros_Familia mf ON mf.id_usuario = u.id_usuario
     JOIN EDI.Roles r ON r.id_rol = u.id_rol
-    WHERE mf.id_familia = @id_familia 
-      AND mf.activo = 1 
+    WHERE mf.id_familia = @id_familia
+      AND mf.activo = 1
       AND u.activo = 1
-      AND (r.nombre_rol IN ('Padre', 'Madre', 'Tutor', 'Admin', 'PapaEDI', 'MamaEDI'))
-      AND u.fcm_token IS NOT NULL
+      AND s.activo = 1
+      AND r.nombre_rol IN ('Padre', 'Madre', 'Tutor', 'Admin', 'PapaEDI', 'MamaEDI')
+      AND s.fcm_token IS NOT NULL
+      AND LEN(s.fcm_token) > 10
   `,
 
   listAprobadas: `
@@ -158,22 +163,30 @@ exports.Q = {
   WHERE p.id_post = @id_post AND p.activo = 1
 `,
 
+  // Multi-dispositivo: una fila por sesión activa de cada miembro de la familia.
   getFamilyTokensForPostNotification: `
-  SELECT DISTINCT u.id_usuario, u.fcm_token, u.nombre
+  SELECT u.id_usuario, s.fcm_token, u.nombre
   FROM EDI.Miembros_Familia mf
   JOIN EDI.Usuarios u ON u.id_usuario = mf.id_usuario
+  JOIN EDI.Usuario_Sesiones s ON s.id_usuario = u.id_usuario
   WHERE mf.id_familia = @id_familia
     AND mf.activo = 1
     AND u.activo = 1
-    AND u.fcm_token IS NOT NULL
+    AND s.activo = 1
+    AND s.fcm_token IS NOT NULL
+    AND LEN(s.fcm_token) > 10
     AND u.id_usuario <> @id_usuario_excluir
 `,
 
+  // Multi-dispositivo: una fila por sesión activa de cada usuario.
   getGlobalTokensForPostNotification: `
-  SELECT u.id_usuario, u.fcm_token, u.nombre
+  SELECT u.id_usuario, s.fcm_token, u.nombre
   FROM EDI.Usuarios u
+  JOIN EDI.Usuario_Sesiones s ON s.id_usuario = u.id_usuario
   WHERE u.activo = 1
-    AND u.fcm_token IS NOT NULL
+    AND s.activo = 1
+    AND s.fcm_token IS NOT NULL
+    AND LEN(s.fcm_token) > 10
     AND u.id_usuario <> @id_usuario_excluir
 `,
 
@@ -183,12 +196,16 @@ exports.Q = {
   WHERE id_usuario = @id_usuario
 `,
 
-  // Todos los padres/tutores de una familia (con o sin FCM token).
-  // Cubre Miembros_Familia Y los vínculos directos papa_id/mama_id en Familias_EDI.
+  // Multi-dispositivo: padres/tutores de una familia con TODOS sus tokens
+  // de sesión activa. Una fila por dispositivo. Si un usuario no tiene
+  // sesiones activas se devuelve igualmente con fcm_token = NULL para que
+  // el controller siga procesando la lógica que no depende del token.
   getParentsByFamilia: `
-  SELECT DISTINCT u.id_usuario, u.fcm_token
+  SELECT u.id_usuario, s.fcm_token
   FROM EDI.Usuarios u
   JOIN EDI.Roles r ON r.id_rol = u.id_rol
+  LEFT JOIN EDI.Usuario_Sesiones s
+    ON s.id_usuario = u.id_usuario AND s.activo = 1
   WHERE u.activo = 1
     AND r.nombre_rol IN ('Padre', 'Madre', 'Tutor', 'Admin', 'PapaEDI', 'MamaEDI')
     AND (

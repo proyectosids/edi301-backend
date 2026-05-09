@@ -229,6 +229,38 @@ exports.remove = async (req, res) => {
   } catch (e) { fail(res, e); }
 };
 
+// Self-deactivation: desactiva la cuenta del usuario autenticado y libera
+// el correo, matrícula y núm. empleado para permitir un nuevo registro.
+// Las relaciones existentes (familia, mensajes, publicaciones) se conservan.
+exports.deactivateMyAccount = async (req, res) => {
+  try {
+    const idUsuario = req.user && req.user.id_usuario;
+    if (!idUsuario) return bad(res, 'No autenticado');
+
+    const rows = await queryP(UQ.selfDeactivate, {
+      id_usuario: { type: sql.Int, value: Number(idUsuario) }
+    });
+
+    if (!rows.length) {
+      // o ya estaba desactivada o no existe
+      return bad(res, 'La cuenta no existe o ya estaba desactivada');
+    }
+
+    // Cierra todas las sesiones (multi-dispositivo) del usuario.
+    await queryP(UQ.deactivateAllSessionsOfUser, {
+      id_usuario: { type: sql.Int, value: Number(idUsuario) }
+    });
+
+    ok(res, {
+      message: 'Cuenta desactivada correctamente',
+      id_usuario: rows[0].id_usuario,
+    });
+  } catch (e) {
+    console.error('deactivateMyAccount error:', e);
+    fail(res, e);
+  }
+};
+
 exports.updateEmail = async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -273,15 +305,110 @@ exports.updateToken = async (req, res) => {
       return bad(res, 'Faltan datos (id_usuario o fcm_token)');
     }
 
+    // Si la request viene autenticada (req.session existe), actualiza el
+    // fcm_token de la SESIÓN actual (multi-dispositivo). Esto es lo
+    // recomendado y garantiza que cada dispositivo guarde su propio token.
+    if (req.session && req.session.id_sesion) {
+      await queryP(UQ.updateSessionFcmToken, {
+        id_sesion: { type: sql.Int,      value: req.session.id_sesion },
+        fcm_token: { type: sql.NVarChar, value: incomingToken },
+      });
+    }
+
+    // Compatibilidad: también actualiza el campo legacy en EDI.Usuarios
+    // para que cualquier consulta vieja siga viendo "algún" token mientras
+    // se completa la migración del resto del código.
     await queryP(UQ.updateFcm, {
-      id_usuario: { type: sql.Int, value: Number(id_usuario) },
-      token: { type: sql.NVarChar, value: incomingToken },
+      id_usuario: { type: sql.Int,      value: Number(id_usuario) },
+      token:      { type: sql.NVarChar, value: incomingToken },
     });
 
     return ok(res, { msg: 'Token actualizado correctamente' });
   } catch (e) {
     console.error('Error actualizando token:', e);
     return fail(res, e);
+  }
+};
+
+// ===========================================================================
+// SESIONES MULTI-DISPOSITIVO
+// ===========================================================================
+
+// Lista las sesiones activas del usuario autenticado (pantalla "Mis dispositivos").
+exports.listMySessions = async (req, res) => {
+  try {
+    const idUsuario = req.user && req.user.id_usuario;
+    if (!idUsuario) return bad(res, 'No autenticado');
+
+    const rows = await queryP(UQ.listMySessions, {
+      id_usuario: { type: sql.Int, value: Number(idUsuario) },
+    });
+
+    const idSesionActual = req.session ? req.session.id_sesion : null;
+    const sesiones = rows.map(s => ({
+      id_sesion:      s.id_sesion,
+      device_info:    s.device_info,
+      platform:       s.platform,
+      ip_address:     s.ip_address,
+      created_at:     s.created_at,
+      last_active_at: s.last_active_at,
+      es_actual:      s.id_sesion === idSesionActual,
+    }));
+
+    ok(res, sesiones);
+  } catch (e) {
+    console.error('listMySessions error:', e);
+    fail(res, e);
+  }
+};
+
+// Cierra una sesión específica del usuario autenticado.
+exports.revokeSession = async (req, res) => {
+  try {
+    const idUsuario = req.user && req.user.id_usuario;
+    const idSesion = Number(req.params.id);
+
+    if (!idUsuario) return bad(res, 'No autenticado');
+    if (!Number.isInteger(idSesion) || idSesion <= 0) {
+      return bad(res, 'id de sesión inválido');
+    }
+
+    const rs = await queryP(UQ.revokeSession, {
+      id_sesion:  { type: sql.Int, value: idSesion },
+      id_usuario: { type: sql.Int, value: Number(idUsuario) },
+    });
+
+    if (!rs.length) {
+      return bad(res, 'La sesión no existe o no te pertenece');
+    }
+
+    ok(res, { message: 'Sesión cerrada', id_sesion: rs[0].id_sesion });
+  } catch (e) {
+    console.error('revokeSession error:', e);
+    fail(res, e);
+  }
+};
+
+// Cierra TODAS las sesiones del usuario excepto la que está haciendo la request.
+exports.revokeAllOtherSessions = async (req, res) => {
+  try {
+    const idUsuario = req.user && req.user.id_usuario;
+    const idSesionActual = req.session && req.session.id_sesion;
+
+    if (!idUsuario || !idSesionActual) return bad(res, 'No autenticado');
+
+    const rs = await queryP(UQ.revokeAllOtherSessions, {
+      id_usuario:        { type: sql.Int, value: Number(idUsuario) },
+      id_sesion_actual:  { type: sql.Int, value: Number(idSesionActual) },
+    });
+
+    ok(res, {
+      message: 'Otras sesiones cerradas',
+      cerradas: rs.length,
+    });
+  } catch (e) {
+    console.error('revokeAllOtherSessions error:', e);
+    fail(res, e);
   }
 };
 

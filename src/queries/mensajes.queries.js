@@ -23,14 +23,19 @@ exports.Q = {
     ORDER BY m.created_at ASC
   `,
 
+  // Multi-dispositivo: regresa el fcm_token de TODAS las sesiones activas
+  // de los miembros de la familia (excluyendo al emisor).
   getFamilyTokens: `
-    SELECT u.fcm_token
-    FROM EDI.Usuarios u
+    SELECT s.fcm_token
+    FROM EDI.Usuario_Sesiones s
+    JOIN EDI.Usuarios u ON u.id_usuario = s.id_usuario
     JOIN EDI.Miembros_Familia mf ON mf.id_usuario = u.id_usuario
     WHERE mf.id_familia = @id_familia
       AND u.id_usuario != @id_sender
       AND u.activo = 1
-      AND u.fcm_token IS NOT NULL
+      AND s.activo = 1
+      AND s.fcm_token IS NOT NULL
+      AND LEN(s.fcm_token) > 10
   `,
 
   countUnread: `

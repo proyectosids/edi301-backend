@@ -37,6 +37,16 @@ router.post('/cumpleanos/imagen',  auth, async (req, res) => {
   }
 });
 
+// Self-service: el usuario autenticado elimina (desactiva) su propia cuenta.
+// Soft-delete: libera correo, matrícula y núm. empleado para registro futuro
+// y conserva todas las relaciones existentes (familia, mensajes, etc.).
+router.delete('/me', auth, C.deactivateMyAccount);
+
+// Multi-dispositivo: gestión de sesiones del usuario autenticado.
+router.get   ('/me/sesiones',     auth, C.listMySessions);          // listar
+router.delete('/me/sesiones',     auth, C.revokeAllOtherSessions);  // cerrar todas las otras
+router.delete('/me/sesiones/:id', auth, C.revokeSession);           // cerrar una específica
+
 // Admin: búsqueda, cambio de rol, listados
 router.get('/buscar-por-ident', C.buscarPorIdent);
 router.get('/admins', auth, C.listAdmins);

@@ -156,20 +156,155 @@ exports.Q = {
     LEFT JOIN EDI.Cat_Estados CE ON CE.descripcion = u.estado 
     WHERE u.id_usuario = @id_usuario
   `,
+  // ===========================================================================
+  // SESIONES MULTI-DISPOSITIVO (EDI.Usuario_Sesiones)
+  // ===========================================================================
+
+  // Inserta una nueva sesión activa.
+  insertSession: `
+    INSERT INTO EDI.Usuario_Sesiones
+      (id_usuario, session_token, fcm_token, device_info, device_id, platform, ip_address, activo)
+    OUTPUT INSERTED.id_sesion
+    VALUES
+      (@id_usuario, @session_token, @fcm_token, @device_info, @device_id, @platform, @ip_address, 1);
+  `,
+
+  // Cuenta las sesiones activas de un usuario.
+  countActiveSessions: `
+    SELECT COUNT(*) AS total
+    FROM EDI.Usuario_Sesiones
+    WHERE id_usuario = @id_usuario AND activo = 1;
+  `,
+
+  // Devuelve los IDs de sesiones a evictar para mantener el límite (5).
+  // Las más antiguas (last_active_at más viejo) son las primeras en irse.
+  // @keep = cuántas dejar vivas (típicamente 5).
+  evictOldestSessions: `
+    UPDATE EDI.Usuario_Sesiones
+    SET activo = 0
+    WHERE id_sesion IN (
+      SELECT id_sesion FROM (
+        SELECT id_sesion,
+               ROW_NUMBER() OVER (ORDER BY last_active_at DESC, id_sesion DESC) AS rn
+        FROM EDI.Usuario_Sesiones
+        WHERE id_usuario = @id_usuario AND activo = 1
+      ) ranked
+      WHERE rn > @keep
+    );
+  `,
+
+  // Lookup principal de authGuard: obtiene usuario + sesión activa por token.
+  sessionByToken: `
+    SELECT TOP 1
+      s.id_sesion,
+      s.id_usuario,
+      s.session_token,
+      s.device_info,
+      s.created_at  AS sesion_created_at,
+      s.last_active_at,
+      u.nombre, u.apellido, u.correo, u.tipo_usuario,
+      u.id_rol, u.foto_perfil, u.estado, u.activo AS usuario_activo,
+      r.nombre_rol
+    FROM EDI.Usuario_Sesiones s
+    JOIN EDI.Usuarios u ON u.id_usuario = s.id_usuario
+    JOIN EDI.Roles r ON r.id_rol = u.id_rol
+    WHERE s.session_token = @session_token
+      AND s.activo = 1;
+  `,
+
+  // Marca como inactiva la sesión que coincida con el token (logout).
+  deactivateSessionByToken: `
+    UPDATE EDI.Usuario_Sesiones
+    SET activo = 0
+    WHERE session_token = @session_token;
+  `,
+
+  // Marca como inactivas TODAS las sesiones del usuario (eliminar cuenta).
+  deactivateAllSessionsOfUser: `
+    UPDATE EDI.Usuario_Sesiones
+    SET activo = 0
+    WHERE id_usuario = @id_usuario AND activo = 1;
+  `,
+
+  // Lista las sesiones activas de un usuario para la pantalla "Mis dispositivos".
+  listMySessions: `
+    SELECT id_sesion,
+           device_info,
+           platform,
+           ip_address,
+           created_at,
+           last_active_at
+    FROM EDI.Usuario_Sesiones
+    WHERE id_usuario = @id_usuario AND activo = 1
+    ORDER BY last_active_at DESC;
+  `,
+
+  // Cierra una sesión específica (solo si pertenece al usuario).
+  revokeSession: `
+    UPDATE EDI.Usuario_Sesiones
+    SET activo = 0
+    OUTPUT DELETED.id_sesion
+    WHERE id_sesion = @id_sesion AND id_usuario = @id_usuario AND activo = 1;
+  `,
+
+  // Cierra TODAS las sesiones del usuario excepto la actual.
+  revokeAllOtherSessions: `
+    UPDATE EDI.Usuario_Sesiones
+    SET activo = 0
+    OUTPUT DELETED.id_sesion
+    WHERE id_usuario = @id_usuario AND activo = 1 AND id_sesion <> @id_sesion_actual;
+  `,
+
+  // Actualiza last_active_at en cada request autenticado (lo llama authGuard).
+  touchSession: `
+    UPDATE EDI.Usuario_Sesiones
+    SET last_active_at = GETDATE()
+    WHERE id_sesion = @id_sesion;
+  `,
+
+  // Actualiza el fcm_token de una sesión específica.
+  updateSessionFcmToken: `
+    UPDATE EDI.Usuario_Sesiones
+    SET fcm_token = @fcm_token
+    WHERE id_sesion = @id_sesion AND activo = 1;
+  `,
+
   softDelete: `UPDATE EDI.Usuarios SET activo = 0, updated_at = GETDATE() WHERE id_usuario = @id_usuario`,
+  selfDeactivate: `
+    UPDATE EDI.Usuarios
+    SET activo        = 0,
+        estado        = 'CUENTA ELIMINADA',
+        correo        = CONCAT('__deleted_', id_usuario, '_',
+                               CAST(DATEDIFF(SECOND, '1970-01-01', GETUTCDATE()) AS NVARCHAR(20)),
+                               '__', correo),
+        matricula     = NULL,
+        num_empleado  = NULL,
+        session_token = NULL,
+        fcm_token     = NULL,
+        updated_at    = GETDATE()
+    OUTPUT INSERTED.id_usuario AS id_usuario,
+           INSERTED.correo     AS correo_archivado
+    WHERE id_usuario = @id_usuario AND activo = 1;
+  `,
   updateSession: `UPDATE EDI.Usuarios SET session_token = @token, updated_at = GETDATE() WHERE id_usuario = @id_usuario`,
   updateFcm:     `UPDATE EDI.Usuarios SET fcm_token = @token, updated_at = GETDATE() WHERE id_usuario = @id_usuario`,
   clearToken: `UPDATE EDI.Usuarios SET session_token = NULL, updated_at = GETDATE() WHERE session_token = @token`,
+  // Multi-dispositivo: una fila por sesión activa de cada padre/tutor de la
+  // familia. El controller que itera sobre las filas ya hace fan-out por
+  // dispositivo automáticamente.
   getTokensPadresPorFamilia: `
-    SELECT u.id_usuario, u.fcm_token AS session_token 
-    FROM EDI.Usuarios u
+    SELECT u.id_usuario, s.fcm_token AS session_token
+    FROM EDI.Usuario_Sesiones s
+    JOIN EDI.Usuarios u ON u.id_usuario = s.id_usuario
     JOIN EDI.Miembros_Familia mf ON mf.id_usuario = u.id_usuario
     JOIN EDI.Roles r ON r.id_rol = u.id_rol
-    WHERE mf.id_familia = @id_familia 
-      AND mf.activo = 1 
+    WHERE mf.id_familia = @id_familia
+      AND mf.activo = 1
       AND u.activo = 1
-      AND (r.nombre_rol IN ('Padre', 'Madre', 'Tutor', 'Admin', 'PapaEDI', 'MamaEDI'))
-      AND u.fcm_token IS NOT NULL  
+      AND s.activo = 1
+      AND r.nombre_rol IN ('Padre', 'Madre', 'Tutor', 'Admin', 'PapaEDI', 'MamaEDI')
+      AND s.fcm_token IS NOT NULL
+      AND LEN(s.fcm_token) > 10
   `,
   
   createNotificacion: `

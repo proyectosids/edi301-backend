@@ -64,16 +64,19 @@ const verificarCumpleanos = async () => {
       console.log(`✅ Publicación creada para ${nombreCompleto} (ID: ${idPost})`);
 
       if (user.id_familia) {
+        // Multi-dispositivo: una fila por sesión activa de cada miembro.
         const familiares = await queryP(`
-          SELECT u.fcm_token
-          FROM EDI.Usuarios u
+          SELECT s.fcm_token
+          FROM EDI.Usuario_Sesiones s
+          INNER JOIN EDI.Usuarios u ON u.id_usuario = s.id_usuario
           INNER JOIN EDI.Miembros_Familia mf
             ON mf.id_usuario = u.id_usuario
            AND mf.activo = 1
           WHERE mf.id_familia = @idFam
             AND u.activo = 1
-            AND u.fcm_token IS NOT NULL
-            AND LEN(u.fcm_token) > 10
+            AND s.activo = 1
+            AND s.fcm_token IS NOT NULL
+            AND LEN(s.fcm_token) > 10
         `, {
           idFam: { type: sql.Int, value: user.id_familia }
         });
@@ -146,12 +149,15 @@ const enviarRecordatorioOracion = async () => {
   try {
     const frase = _fraseOracionDelDia();
 
+    // Multi-dispositivo: una fila por sesión activa de cada usuario.
     const rows = await queryP(`
-      SELECT fcm_token
-      FROM EDI.Usuarios
-      WHERE activo = 1
-        AND fcm_token IS NOT NULL
-        AND LEN(fcm_token) > 10
+      SELECT s.fcm_token
+      FROM EDI.Usuario_Sesiones s
+      JOIN EDI.Usuarios u ON u.id_usuario = s.id_usuario
+      WHERE u.activo = 1
+        AND s.activo = 1
+        AND s.fcm_token IS NOT NULL
+        AND LEN(s.fcm_token) > 10
     `);
 
     const tokens = (rows || []).map(r => r.fcm_token).filter(Boolean);
