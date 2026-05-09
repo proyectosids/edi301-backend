@@ -1,17 +1,4 @@
--- ============================================================================
--- Migración: Multi-sesión por usuario (login multi-dispositivo)
---
--- Crea la tabla EDI.Usuario_Sesiones para permitir que un mismo usuario
--- tenga su cuenta abierta en varios dispositivos. Cada sesión tiene su
--- propio session_token y fcm_token.
---
--- Las columnas EDI.Usuarios.session_token y EDI.Usuarios.fcm_token quedan
--- como DEPRECATED (no se borran para no romper scripts viejos).
---
--- Esta migración es idempotente: se puede correr varias veces sin daño.
--- ============================================================================
 
--- 1) Crear la tabla si no existe
 IF NOT EXISTS (
     SELECT 1
     FROM sys.objects
@@ -24,9 +11,9 @@ BEGIN
         id_usuario      INT          NOT NULL,
         session_token   NVARCHAR(255) NOT NULL,
         fcm_token       NVARCHAR(500) NULL,
-        device_info     NVARCHAR(255) NULL,   -- "iPhone 17 Pro Max - iOS 18"
-        device_id       NVARCHAR(255) NULL,   -- identificador único del dispositivo
-        platform        NVARCHAR(20)  NULL,   -- "ios" / "android" / "web"
+        device_info     NVARCHAR(255) NULL,   
+        device_id       NVARCHAR(255) NULL,   
+        platform        NVARCHAR(20)  NULL,   
         ip_address      NVARCHAR(45)  NULL,
         created_at      DATETIME      NOT NULL DEFAULT GETDATE(),
         last_active_at  DATETIME      NOT NULL DEFAULT GETDATE(),
@@ -49,7 +36,7 @@ BEGIN
 END;
 GO
 
--- 2) Migrar tokens existentes una sola vez (solo si la tabla está vacía)
+-- Migrar tokens existentes una sola vez (solo si la tabla está vacía)
 IF NOT EXISTS (SELECT TOP 1 1 FROM EDI.Usuario_Sesiones)
 BEGIN
     INSERT INTO EDI.Usuario_Sesiones
