@@ -5,6 +5,7 @@ const MiembrosQ = require('../queries/miembros.queries').Q;
 const { saveOptimizedImage } = require('../utils/imageStorage');
 const { enviarNotificacionMulticast } = require('../utils/firebase');
 const { getActiveFcmTokensForUsers } = require('../utils/sessions');
+const { getEdiChildLimit, limitError } = require('../utils/familyChildLimit');
 const withBase = (tpl) => tpl.replace('{{BASE}}', Q.base);
 
 // ── Helpers de validación ──────────────────────────────────────────────────
@@ -123,6 +124,15 @@ exports.create = async (req, res) => {
     const { nombre_familia, papa_id, mama_id, residencia, direccion, hijos = [] } = req.body;
     
     if (!nombre_familia || !residencia) return bad(res, 'Faltan datos obligatorios');
+
+    // Los hijos sanguíneos se guardan en Hijos_Hogar y no cuentan aquí.
+    // Este arreglo contiene únicamente usuarios EDI asignados como hijos.
+    if (Array.isArray(hijos)) {
+      const limit = await getEdiChildLimit();
+      if (hijos.length > limit) {
+        return bad(res, limitError({ limit, current: 0, requested: hijos.length }));
+      }
+    }
 
     // Validar que los padres no estén asignados a otra familia activa
     if (papa_id) {
@@ -512,6 +522,300 @@ exports.listAvailable = async (req, res) => {
     ok(res, formatted);
   } catch (e) {
     console.error('Error en listAvailable:', e); // Esto te dirá exactamente qué falla
+    fail(res, e);
+  }
+};
+
+// ============================================================================
+// FAMILIA MANUAL — creación sin padres registrados + vinculación posterior
+// ============================================================================
+
+// ── Helpers de nombres (REPLICAN exactamente la lógica del frontend Flutter
+//    en lib/src/pages/Admin/add_family/add_family_controller.dart) ───────────
+
+function _firstSurname(fullLastName) {
+  if (!fullLastName) return '';
+  const text = String(fullLastName).trim().replace(/\s+/g, ' ');
+  if (!text) return '';
+  const parts = text.split(' ');
+  if (parts.length === 0) return '';
+
+  const lower = parts.map((e) => e.toLowerCase());
+  if (parts.length >= 3 && lower[0] === 'de' && lower[1] === 'la')  return `${parts[0]} ${parts[1]} ${parts[2]}`;
+  if (parts.length >= 3 && lower[0] === 'de' && lower[1] === 'los') return `${parts[0]} ${parts[1]} ${parts[2]}`;
+  if (parts.length >= 3 && lower[0] === 'de' && lower[1] === 'las') return `${parts[0]} ${parts[1]} ${parts[2]}`;
+  if (parts.length >= 2 && (lower[0] === 'de' || lower[0] === 'del')) return `${parts[0]} ${parts[1]}`;
+  return parts[0];
+}
+
+function _secondSurname(fullLastName) {
+  if (!fullLastName) return '';
+  const text = String(fullLastName).trim().replace(/\s+/g, ' ');
+  if (!text) return '';
+  const parts = text.split(' ');
+  if (parts.length <= 1) return '';
+
+  const lower = parts.map((e) => e.toLowerCase());
+  let firstSurnameLength;
+  if (parts.length >= 3 && lower[0] === 'de' && (lower[1] === 'la' || lower[1] === 'los' || lower[1] === 'las')) {
+    firstSurnameLength = 3;
+  } else if (parts.length >= 2 && (lower[0] === 'de' || lower[0] === 'del')) {
+    firstSurnameLength = 2;
+  } else {
+    firstSurnameLength = 1;
+  }
+  if (firstSurnameLength >= parts.length) return '';
+  return parts.slice(firstSurnameLength).join(' ');
+}
+
+/** Misma fórmula que recomputeFamilyName() en el frontend. */
+function _buildFamilyName(papaApellido, mamaApellido) {
+  const hasPapa = papaApellido && papaApellido.trim().length > 0;
+  const hasMama = mamaApellido && mamaApellido.trim().length > 0;
+
+  let base = '';
+  if (hasPapa && hasMama) {
+    base = [_firstSurname(papaApellido), _firstSurname(mamaApellido)]
+      .filter((s) => s.trim()).join(' ');
+  } else if (hasPapa) {
+    base = [_firstSurname(papaApellido), _secondSurname(papaApellido)]
+      .filter((s) => s.trim()).join(' ');
+  } else if (hasMama) {
+    base = [_firstSurname(mamaApellido), _secondSurname(mamaApellido)]
+      .filter((s) => s.trim()).join(' ');
+  }
+  return base ? `Familia ${base}` : 'Familia';
+}
+
+/** Capitaliza estilo "Juan Carlos" / "García López" respetando partículas. */
+function _formatSpanishName(text) {
+  if (!text) return text;
+  const lowerWords = ['de','del','la','las','los','y','da','dos','van','von'];
+  return String(text)
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .map((word, i) => (lowerWords.includes(word) && i !== 0)
+      ? word
+      : word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+// ── POST /familias/manual ──────────────────────────────────────────────────
+exports.createManual = async (req, res) => {
+  try {
+    let {
+      papa_nombre, papa_apellido,
+      mama_nombre, mama_apellido,
+      residencia, direccion, descripcion, nombre_familia,
+    } = req.body;
+
+    // Formatear (mismo formateo que se aplica al crear usuarios)
+    papa_nombre   = papa_nombre   ? _formatSpanishName(papa_nombre)   : null;
+    papa_apellido = papa_apellido ? _formatSpanishName(papa_apellido) : null;
+    mama_nombre   = mama_nombre   ? _formatSpanishName(mama_nombre)   : null;
+    mama_apellido = mama_apellido ? _formatSpanishName(mama_apellido) : null;
+
+    if (!papa_nombre && !mama_nombre) {
+      return bad(res, 'Debes indicar al menos el nombre del padre o de la madre.');
+    }
+
+    // Si se pasó papa_nombre debe venir apellido (y viceversa). Misma exigencia
+    // que en el flujo normal — el match contra nuevos usuarios necesita ambos.
+    if (papa_nombre && !papa_apellido) return bad(res, 'Falta el apellido del padre.');
+    if (mama_nombre && !mama_apellido) return bad(res, 'Falta el apellido de la madre.');
+
+    // Generar nombre_familia si no vino explícito
+    const computedName = _buildFamilyName(papa_apellido, mama_apellido);
+    const finalName = (nombre_familia && nombre_familia.trim()) || computedName;
+
+    // Dirección solo si residencia=EXTERNA
+    const finalDireccion = (residencia === 'EXTERNA') ? (direccion ?? null) : null;
+
+    const rows = await queryP(Q.insertManual, {
+      nombre_familia:          { type: sql.NVarChar, value: finalName },
+      residencia:              { type: sql.NVarChar, value: residencia },
+      direccion:               { type: sql.NVarChar, value: finalDireccion },
+      papa_nombre_pendiente:   { type: sql.NVarChar, value: papa_nombre   ?? null },
+      papa_apellido_pendiente: { type: sql.NVarChar, value: papa_apellido ?? null },
+      mama_nombre_pendiente:   { type: sql.NVarChar, value: mama_nombre   ?? null },
+      mama_apellido_pendiente: { type: sql.NVarChar, value: mama_apellido ?? null },
+    });
+
+    if (!rows.length) return fail(res, 'No se pudo crear la familia manual.');
+    const id_familia = rows[0].id_familia;
+
+    // Descripción se setea aparte (la query insert no la incluye, igual que el flujo normal)
+    if (descripcion && descripcion.trim()) {
+      await queryP(`
+        UPDATE EDI.Familias_EDI SET descripcion = @descripcion, updated_at = GETDATE()
+        WHERE id_familia = @id_familia
+      `, {
+        id_familia:  { type: sql.Int,      value: id_familia },
+        descripcion: { type: sql.NVarChar, value: descripcion.trim() },
+      });
+    }
+
+    const finalRows = await queryP(withBase(Q.byId), { id_familia: { type: sql.Int, value: id_familia } });
+    created(res, finalRows[0]);
+  } catch (e) {
+    console.error('createManual error:', e);
+    fail(res, e);
+  }
+};
+
+// ── GET /familias/candidatos/:id_usuario ───────────────────────────────────
+// Para el modal post-registro: devuelve TODAS las familias activas con
+// papa/mama pendiente cuyos nombre+apellido coincidan (case+accent insensitive)
+// con los del usuario. Decide el rol según id_rol del usuario:
+//    PapaEDI (2) → buscamos en slot PAPA
+//    MamaEDI (3) → buscamos en slot MAMA
+exports.findCandidatesForUser = async (req, res) => {
+  try {
+    const idUsuario = Number(req.params.id_usuario);
+    if (!Number.isInteger(idUsuario) || idUsuario <= 0) {
+      return bad(res, 'id_usuario inválido');
+    }
+
+    const userRows = await queryP(`
+      SELECT u.id_usuario, u.nombre, u.apellido, u.id_rol, r.nombre_rol
+      FROM EDI.Usuarios u
+      JOIN EDI.Roles r ON r.id_rol = u.id_rol
+      WHERE u.id_usuario = @id AND u.activo = 1
+    `, { id: { type: sql.Int, value: idUsuario } });
+
+    if (!userRows.length) return notFound(res);
+    const user = userRows[0];
+
+    // Determinar el rol candidato. Aceptamos también los nombres viejos
+    // ('Padre' / 'Madre') por si quedaran roles legacy.
+    let rol = null;
+    if (['PapaEDI', 'Padre'].includes(user.nombre_rol)) rol = 'PAPA';
+    else if (['MamaEDI', 'Madre'].includes(user.nombre_rol)) rol = 'MAMA';
+
+    if (!rol) {
+      // No es padre ni madre: no hay candidatos posibles
+      return ok(res, []);
+    }
+
+    const candidatos = await queryP(Q.findCandidatesForUser, {
+      rol:      { type: sql.NVarChar, value: rol },
+      nombre:   { type: sql.NVarChar, value: user.nombre },
+      apellido: { type: sql.NVarChar, value: user.apellido },
+    });
+
+    ok(res, candidatos);
+  } catch (e) {
+    console.error('findCandidatesForUser error:', e);
+    fail(res, e);
+  }
+};
+
+// ── POST /familias/:id/vincular ────────────────────────────────────────────
+// Vincula un usuario al slot PAPA o MAMA de una familia. Limpia los campos
+// pendientes, inserta en Miembros_Familia y envía notificación.
+// Usado por:
+//   (1) modal post-registro (usuario se vincula a sí mismo)
+//   (2) panel admin (admin vincula a un tercero)
+exports.linkUser = async (req, res) => {
+  try {
+    const id_familia = Number(req.params.id);
+    const { id_usuario, rol } = req.body || {};
+
+    if (!Number.isInteger(id_familia) || id_familia <= 0) return bad(res, 'id de familia inválido');
+    if (!Number.isInteger(id_usuario) || id_usuario <= 0) return bad(res, 'id_usuario inválido');
+    if (!['PAPA', 'MAMA'].includes(rol)) return bad(res, 'rol debe ser PAPA o MAMA');
+
+    // Seguridad: si el caller NO es Admin, solo puede vincularse a sí mismo.
+    const callerRol = req.user && (req.user.nombre_rol || req.user.rol);
+    const callerId  = req.user && (req.user.id_usuario || req.user.id);
+    if (callerRol !== 'Admin' && Number(callerId) !== Number(id_usuario)) {
+      return res.status(403).json({ ok: false, error: 'No puedes vincular a otro usuario.' });
+    }
+
+    // Validar que el usuario no esté ya en otra familia (como padre/madre o miembro)
+    const conflictPadre = await _padreEnOtraFamilia(id_usuario, id_familia);
+    if (conflictPadre) {
+      return bad(res, `El usuario ya pertenece a la familia "${conflictPadre.nombre_familia}".`);
+    }
+    const conflictMiembro = await _usuarioEnOtraFamilia(id_usuario, id_familia);
+    if (conflictMiembro) {
+      return bad(res, `El usuario ya es miembro de la familia "${conflictMiembro.nombre_familia}".`);
+    }
+
+    // Actualizar el slot. La query falla (0 filas) si el slot ya estaba ocupado.
+    const linked = await queryP(Q.linkUserToFamilySlot, {
+      id_familia: { type: sql.Int,      value: id_familia },
+      id_usuario: { type: sql.Int,      value: id_usuario },
+      rol:        { type: sql.NVarChar, value: rol },
+    });
+
+    if (!linked.length) {
+      return bad(res, `El slot ${rol} de esta familia ya estaba ocupado o la familia no existe.`);
+    }
+
+    const familiaActualizada = linked[0];
+
+    // Insertar en Miembros_Familia (idempotente — el índice único evita duplicados,
+    // así que envolvemos en try/catch para que no truene si ya existía)
+    try {
+      await queryP(`
+        INSERT INTO EDI.Miembros_Familia (id_familia, id_usuario, tipo_miembro, activo, created_at)
+        VALUES (@id_familia, @id_usuario, @tipo, 1, SYSDATETIME())
+      `, {
+        id_familia: { type: sql.Int,      value: id_familia },
+        id_usuario: { type: sql.Int,      value: id_usuario },
+        tipo:       { type: sql.NVarChar, value: rol === 'PAPA' ? 'PADRE' : 'MADRE' },
+      });
+    } catch (e) {
+      // ignorar duplicados (id_familia + id_usuario únicos)
+      if (e.number !== 2627 && e.number !== 2601) throw e;
+    }
+
+    // Notificación in-app + push
+    try {
+      await queryP(`
+        INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
+        VALUES (@uid, @tit, @body, @tipo, @ref, 0, GETUTCDATE())
+      `, {
+        uid:  { type: sql.Int,      value: id_usuario },
+        tit:  { type: sql.NVarChar, value: '¡Ya estás en una familia! 🏠' },
+        body: { type: sql.NVarChar, value: `Has sido vinculado a la familia "${familiaActualizada.nombre_familia}".` },
+        tipo: { type: sql.NVarChar, value: 'FAMILIA_VINCULADA' },
+        ref:  { type: sql.Int,      value: id_familia },
+      });
+
+      const tokens = await getActiveFcmTokensForUsers([id_usuario]);
+      if (tokens.length > 0) {
+        enviarNotificacionMulticast(
+          tokens,
+          '¡Ya estás en una familia! 🏠',
+          `Has sido vinculado a la familia "${familiaActualizada.nombre_familia}".`,
+          { tipo: 'FAMILIA_VINCULADA', id_familia: String(id_familia) },
+        );
+      }
+    } catch (notifErr) {
+      console.error('linkUser – error enviando notificación:', notifErr.message);
+    }
+
+    const rows = await queryP(withBase(Q.byId), { id_familia: { type: sql.Int, value: id_familia } });
+    ok(res, rows[0]);
+  } catch (e) {
+    console.error('linkUser error:', e);
+    fail(res, e);
+  }
+};
+
+// ── GET /familias/pendientes (admin) ───────────────────────────────────────
+// Lista todas las familias con al menos un slot de padre/madre sin vincular.
+// Sirve para el panel donde el admin puede forzar la vinculación manualmente.
+exports.listPendientes = async (_req, res) => {
+  try {
+    const rows = await queryP(Q.listPendientes);
+    ok(res, rows);
+  } catch (e) {
+    console.error('listPendientes error:', e);
     fail(res, e);
   }
 };

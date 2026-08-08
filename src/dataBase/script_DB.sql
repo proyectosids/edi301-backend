@@ -73,6 +73,14 @@ CREATE TABLE [EDI].[Familias_EDI](
 	[direccion] [nvarchar](200) NULL,
 	[foto_portada_url] [nvarchar](max) NULL,
 	[foto_perfil_url] [nvarchar](max) NULL,
+	-- Columnas "pendientes" para crear familias manuales sin que los padres
+	-- estén registrados todavía. Cuando un usuario se registra y su
+	-- nombre+apellido coincide, se mueve su id_usuario a papa_id/mama_id y
+	-- estas columnas se vacían (NULL).
+	[papa_nombre_pendiente] [nvarchar](100) NULL,
+	[papa_apellido_pendiente] [nvarchar](100) NULL,
+	[mama_nombre_pendiente] [nvarchar](100) NULL,
+	[mama_apellido_pendiente] [nvarchar](100) NULL,
 PRIMARY KEY CLUSTERED ([id_familia] ASC)
 ) ON [PRIMARY]
 GO
@@ -330,6 +338,14 @@ CREATE UNIQUE NONCLUSTERED INDEX [UX_Miembros_FamiliaUsuario] ON [EDI].[Miembros
 CREATE UNIQUE NONCLUSTERED INDEX [UX_Detalle_Provision_Uniq] ON [EDI].[Detalle_Provision]([id_provision] ASC, [id_usuario] ASC)
 CREATE INDEX IX_Participantes_Usuario ON [EDI].[Chat_Participantes](id_usuario)
 CREATE INDEX IX_Mensajes_Sala ON [EDI].[Chat_Mensajes](id_sala)
+
+-- Índices para acelerar el match de familias manuales por nombre+apellido pendiente
+CREATE NONCLUSTERED INDEX IX_Familias_PendientePapa
+    ON [EDI].[Familias_EDI]([papa_nombre_pendiente], [papa_apellido_pendiente])
+    WHERE [papa_id] IS NULL AND [activo] = 1
+CREATE NONCLUSTERED INDEX IX_Familias_PendienteMama
+    ON [EDI].[Familias_EDI]([mama_nombre_pendiente], [mama_apellido_pendiente])
+    WHERE [mama_id] IS NULL AND [activo] = 1
 
 
 -- 6. CARGA DE DATOS 

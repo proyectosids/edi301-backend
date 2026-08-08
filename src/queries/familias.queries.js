@@ -7,9 +7,9 @@ exports.Q = {
       f.papa_id,
       f.mama_id,
       f.direccion,
-      f.foto_portada_url,  
+      f.foto_portada_url,
       f.foto_perfil_url,
-      f.descripcion, 
+      f.descripcion,
       (p.nombre + ' ' + p.apellido) AS papa_nombre,
       (m.nombre + ' ' + m.apellido) AS mama_nombre,
       p.num_empleado     AS papa_num_empleado,
@@ -19,7 +19,12 @@ exports.Q = {
       p.foto_perfil      AS papa_foto_perfil_url,
       m.foto_perfil      AS mama_foto_perfil_url,
       p.fecha_nacimiento AS papa_fecha_nacimiento,
-      m.fecha_nacimiento AS mama_fecha_nacimiento
+      m.fecha_nacimiento AS mama_fecha_nacimiento,
+      -- Datos "pendientes" (familias creadas manualmente sin usuario aún)
+      f.papa_nombre_pendiente,
+      f.papa_apellido_pendiente,
+      f.mama_nombre_pendiente,
+      f.mama_apellido_pendiente
 
     FROM EDI.Familias_EDI AS f
     LEFT JOIN EDI.Usuarios AS p ON p.id_usuario = f.papa_id
@@ -134,7 +139,7 @@ exports.Q = {
   updateFotoPortada: "UPDATE familias SET foto_portada = ? WHERE id = ?",
 
 listAvailable: `
-  SELECT 
+  SELECT
     f.id_familia,
     f.nombre_familia,
     f.foto_portada_url AS portada,
@@ -143,18 +148,128 @@ listAvailable: `
     (SELECT COUNT(*) FROM EDI.Miembros_Familia mf
      WHERE mf.id_familia = f.id_familia
        AND mf.activo = 1
-       AND mf.tipo_miembro = 'ALUMNO_ASIGNADO') as num_alumnos,
+       AND mf.tipo_miembro IN ('HIJO', 'ALUMNO_ASIGNADO')) as num_alumnos,
+    ISNULL(TRY_CONVERT(INT, (
+      SELECT valor FROM EDI.App_Config
+      WHERE clave = 'limite_hijos_edi_por_familia'
+    )), 7) AS limite_hijos_edi,
     ISNULL((
       SELECT u.nombre + ' ' + u.apellido + ' & '
       FROM EDI.Usuarios u
       JOIN EDI.Miembros_Familia mf ON u.id_usuario = mf.id_usuario
       JOIN EDI.Roles r ON u.id_rol = r.id_rol
-      WHERE mf.id_familia = f.id_familia 
+      WHERE mf.id_familia = f.id_familia
         AND r.nombre_rol IN ('Padre', 'Madre', 'Tutor', 'PapaEDI', 'MamaEDI')
       FOR XML PATH('')
     ), 'Sin padres asignados') as padres
   FROM EDI.Familias_EDI f
   WHERE f.activo = 1
   ORDER BY num_alumnos ASC
-`
+`,
+
+  // ── FAMILIA MANUAL ────────────────────────────────────────────────────────
+  // Inserta una familia "manual": papa_id/mama_id en NULL y los nombres
+  // se quedan en las columnas *_pendiente para hacer match en el futuro.
+  insertManual: `
+    INSERT INTO EDI.Familias_EDI (
+      nombre_familia, residencia, direccion, papa_id, mama_id,
+      papa_nombre_pendiente, papa_apellido_pendiente,
+      mama_nombre_pendiente, mama_apellido_pendiente
+    )
+    OUTPUT INSERTED.id_familia
+    VALUES (
+      @nombre_familia, @residencia, @direccion, NULL, NULL,
+      @papa_nombre_pendiente, @papa_apellido_pendiente,
+      @mama_nombre_pendiente, @mama_apellido_pendiente
+    );
+  `,
+
+  // Match por nombre+apellido (case-insensitive + accent-insensitive).
+  // Devuelve TODAS las familias candidatas para que el frontend muestre
+  // un selector "elige tu familia" si hay más de una.
+  // El parámetro @rol indica si buscamos como PAPA o MAMA.
+  findCandidatesForUser: `
+    SELECT
+      f.id_familia,
+      f.nombre_familia,
+      f.residencia,
+      f.direccion,
+      f.foto_portada_url,
+      f.foto_perfil_url,
+      f.papa_nombre_pendiente,
+      f.papa_apellido_pendiente,
+      f.mama_nombre_pendiente,
+      f.mama_apellido_pendiente,
+      f.created_at,
+      CASE WHEN @rol = 'PAPA' THEN 'PAPA' ELSE 'MAMA' END AS rol_candidato
+    FROM EDI.Familias_EDI f
+    WHERE f.activo = 1
+      AND (
+            (@rol = 'PAPA'
+              AND f.papa_id IS NULL
+              AND f.papa_nombre_pendiente   COLLATE Latin1_General_CI_AI = @nombre   COLLATE Latin1_General_CI_AI
+              AND f.papa_apellido_pendiente COLLATE Latin1_General_CI_AI = @apellido COLLATE Latin1_General_CI_AI)
+         OR (@rol = 'MAMA'
+              AND f.mama_id IS NULL
+              AND f.mama_nombre_pendiente   COLLATE Latin1_General_CI_AI = @nombre   COLLATE Latin1_General_CI_AI
+              AND f.mama_apellido_pendiente COLLATE Latin1_General_CI_AI = @apellido COLLATE Latin1_General_CI_AI)
+          )
+    ORDER BY f.created_at DESC
+  `,
+
+  // Listado de TODAS las familias con vinculación pendiente (panel admin).
+  listPendientes: `
+    SELECT
+      f.id_familia,
+      f.nombre_familia,
+      f.residencia,
+      f.direccion,
+      f.foto_portada_url,
+      f.created_at,
+      f.papa_id,
+      f.mama_id,
+      f.papa_nombre_pendiente,
+      f.papa_apellido_pendiente,
+      f.mama_nombre_pendiente,
+      f.mama_apellido_pendiente,
+      (p.nombre + ' ' + p.apellido) AS papa_nombre_real,
+      (m.nombre + ' ' + m.apellido) AS mama_nombre_real
+    FROM EDI.Familias_EDI f
+    LEFT JOIN EDI.Usuarios p ON p.id_usuario = f.papa_id
+    LEFT JOIN EDI.Usuarios m ON m.id_usuario = f.mama_id
+    WHERE f.activo = 1
+      AND (
+            (f.papa_id IS NULL AND f.papa_nombre_pendiente IS NOT NULL)
+         OR (f.mama_id IS NULL AND f.mama_nombre_pendiente IS NOT NULL)
+          )
+    ORDER BY f.created_at DESC
+  `,
+
+  // Vincula un usuario al slot PAPA o MAMA de una familia. Limpia los
+  // campos *_pendiente correspondientes.
+  // Parámetros: @id_familia, @id_usuario, @rol ('PAPA' | 'MAMA')
+  linkUserToFamilySlot: `
+    UPDATE EDI.Familias_EDI
+    SET
+      papa_id = CASE
+        WHEN @rol = 'PAPA' AND papa_id IS NULL THEN @id_usuario
+        ELSE papa_id
+      END,
+      mama_id = CASE
+        WHEN @rol = 'MAMA' AND mama_id IS NULL THEN @id_usuario
+        ELSE mama_id
+      END,
+      papa_nombre_pendiente   = CASE WHEN @rol = 'PAPA' THEN NULL ELSE papa_nombre_pendiente   END,
+      papa_apellido_pendiente = CASE WHEN @rol = 'PAPA' THEN NULL ELSE papa_apellido_pendiente END,
+      mama_nombre_pendiente   = CASE WHEN @rol = 'MAMA' THEN NULL ELSE mama_nombre_pendiente   END,
+      mama_apellido_pendiente = CASE WHEN @rol = 'MAMA' THEN NULL ELSE mama_apellido_pendiente END,
+      updated_at = GETDATE()
+    OUTPUT INSERTED.id_familia, INSERTED.nombre_familia, INSERTED.papa_id, INSERTED.mama_id
+    WHERE id_familia = @id_familia
+      AND activo = 1
+      AND (
+            (@rol = 'PAPA' AND papa_id IS NULL)
+         OR (@rol = 'MAMA' AND mama_id IS NULL)
+          );
+  `,
 };

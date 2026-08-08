@@ -19,6 +19,7 @@ router.use('/notificaciones', require('./notificaciones.routes'));
 router.use('/alertas', require('./alertas.routes'));
 router.use('/hijos-hogar', require('./hijos-hogar.routes'));
 router.use('/renovaciones', require('./renovaciones.routes'));
+router.use('/configuracion', require('./configuracion.routes'));
 
 
 module.exports = router;

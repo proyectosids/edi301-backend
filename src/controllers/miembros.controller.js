@@ -1,6 +1,7 @@
 const { sql, queryP, pool } = require('../dataBase/dbConnection');
 const { ok, created, bad, fail } = require('../utils/http');
 const { enviarNotificacionPush, enviarNotificacionMulticast } = require('../utils/firebase');
+const { canAddEdiChildren, limitError } = require('../utils/familyChildLimit');
 
 // ── Helper ────────────────────────────────────────────────────────────────
 /** Devuelve { id_familia, nombre_familia } si el usuario ya está en otra familia activa */
@@ -25,6 +26,11 @@ async function _usuarioEnOtraFamilia(userId, excludeFamiliaId = null) {
 async function add(req, res) {
   try {
     const { id_familia, id_usuario, tipo_miembro } = req.body;
+
+    if (['HIJO', 'ALUMNO_ASIGNADO'].includes(tipo_miembro)) {
+      const capacity = await canAddEdiChildren(id_familia);
+      if (!capacity.allowed) return bad(res, limitError(capacity));
+    }
 
     // Validar que el usuario no esté ya en otra familia activa
     const conflict = await _usuarioEnOtraFamilia(id_usuario, id_familia);
@@ -94,6 +100,9 @@ async function addBulk(req, res) {
   const transaction = new sql.Transaction(pool);
   try {
     const { id_familia, id_usuarios } = req.body;
+    const uniqueUserIds = [...new Set(id_usuarios.map(Number))];
+    const capacity = await canAddEdiChildren(id_familia, uniqueUserIds.length);
+    if (!capacity.allowed) return bad(res, limitError(capacity));
     const familiaRes = await queryP('SELECT nombre_familia FROM EDI.Familias_EDI WHERE id_familia = @id', {
         id: { type: sql.Int, value: id_familia }
     });
@@ -101,7 +110,7 @@ async function addBulk(req, res) {
 
     // Validar conflictos ANTES de abrir la transacción
     const conflicts = [];
-    for (const id_usuario of id_usuarios) {
+    for (const id_usuario of uniqueUserIds) {
       const c = await _usuarioEnOtraFamilia(id_usuario, id_familia);
       if (c) conflicts.push({ id_usuario, nombre_familia: c.nombre_familia });
     }
@@ -114,7 +123,7 @@ async function addBulk(req, res) {
     }
 
     await transaction.begin();
-    for (const id_usuario of id_usuarios) {
+    for (const id_usuario of uniqueUserIds) {
       const request = new sql.Request(transaction);
       request.input('id_familia', sql.Int, id_familia);
       request.input('id_usuario', sql.Int, id_usuario);
@@ -133,9 +142,9 @@ async function addBulk(req, res) {
     }
 
     // Proceso de notificaciones (Push y DB)
-    _enviarNotificacionesBulk(id_familia, id_usuarios, nombreFamilia);
+    _enviarNotificacionesBulk(id_familia, uniqueUserIds, nombreFamilia);
 
-    return ok(res, { message: `${id_usuarios.length} miembro(s) agregado(s) con éxito.` });
+    return ok(res, { message: `${uniqueUserIds.length} miembro(s) agregado(s) con éxito.` });
   } catch (e) {
     if (transaction.rolledBack === false) await transaction.rollback();
     fail(res, e);

@@ -4,6 +4,7 @@ const { createUserSchema, updateUserSchema } = require('../models/usuario.model'
 const { hashPassword } = require('../utils/hash');
 const { ok, created, bad, fail, notFound } = require('../utils/http');
 const UQ = require('../queries/usuarios.queries').Q;
+const FamiliasQ = require('../queries/familias.queries').Q;
 const { saveOptimizedProfilePhoto } = require('../utils/imageStorage');
 
 exports.create = async (req, res) => {
@@ -45,12 +46,34 @@ exports.create = async (req, res) => {
         return fail(res, 'La base de datos no devolvió el usuario creado.');
     }
 
-    const user = rows[0]; 
+    const user = rows[0];
     delete user.contrasena;
 
 
-    const newUserId = user.id_usuario || user.IdUsuario || user.idUsuario; 
+    const newUserId = user.id_usuario || user.IdUsuario || user.idUsuario;
 
+    // ── Buscar familias "manuales" pendientes que matcheen este usuario ─────
+    // Solo aplica si el rol es PapaEDI (2) o MamaEDI (3). El frontend usará
+    // este array para mostrar el modal "Elige tu familia" después del registro.
+    user.familia_candidatos = [];
+    try {
+      const idRol = Number(value.id_rol);
+      let rolMatch = null;
+      if (idRol === 2) rolMatch = 'PAPA';
+      else if (idRol === 3) rolMatch = 'MAMA';
+
+      if (rolMatch) {
+        const candidatos = await queryP(FamiliasQ.findCandidatesForUser, {
+          rol:      { type: sql.NVarChar, value: rolMatch },
+          nombre:   { type: sql.NVarChar, value: nombreFormateado },
+          apellido: { type: sql.NVarChar, value: apellidoFormateado },
+        });
+        user.familia_candidatos = candidatos || [];
+      }
+    } catch (matchErr) {
+      // No bloquear el registro si la búsqueda falla
+      console.error('familia_candidatos (no bloqueante):', matchErr.message);
+    }
 
     responded = true;
     created(res, user);
