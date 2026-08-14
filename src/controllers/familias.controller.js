@@ -121,9 +121,16 @@ exports.searchByDocument = async (req, res) => {
 exports.create = async (req, res) => {
   const transaction = new sql.Transaction(pool);
   try {
-    const { nombre_familia, papa_id, mama_id, residencia, direccion, hijos = [] } = req.body;
+    const { nombre_familia, papa_id, mama_id, residencia, direccion, hijos = [], tios = [] } = req.body;
     
     if (!nombre_familia || !residencia) return bad(res, 'Faltan datos obligatorios');
+
+    const idsIntegrantes = [papa_id, mama_id, ...hijos, ...tios]
+      .filter(Boolean)
+      .map(Number);
+    if (new Set(idsIntegrantes).size !== idsIntegrantes.length) {
+      return bad(res, 'Una persona solo puede ocupar un lugar dentro de la misma familia.');
+    }
 
     // Los hijos sanguíneos se guardan en Hijos_Hogar y no cuentan aquí.
     // Este arreglo contiene únicamente usuarios EDI asignados como hijos.
@@ -144,14 +151,19 @@ exports.create = async (req, res) => {
       if (conflict) return bad(res, `La madre seleccionada ya pertenece a la familia "${conflict.nombre_familia}". Una madre no puede pertenecer a más de una familia.`);
     }
 
-    // Validar que los hijos no estén asignados a otra familia activa
-    if (Array.isArray(hijos) && hijos.length > 0) {
-      for (const hijoId of hijos) {
-        const conflict = await _usuarioEnOtraFamilia(hijoId);
+    // Hijos y tíos pertenecen a una sola familia activa. Los tíos no cuentan
+    // para el límite de hijos EDI.
+    const miembrosFamilia = [
+      ...(Array.isArray(hijos) ? hijos : []),
+      ...(Array.isArray(tios) ? tios : []),
+    ];
+    if (miembrosFamilia.length > 0) {
+      for (const usuarioId of miembrosFamilia) {
+        const conflict = await _usuarioEnOtraFamilia(usuarioId);
         if (conflict) {
           return res.status(409).json({
             ok: false,
-            error: `Un hijo seleccionado ya pertenece a la familia "${conflict.nombre_familia}". No puede estar en más de una familia.`,
+            error: `El integrante seleccionado ya pertenece a la familia "${conflict.nombre_familia}". No puede estar en más de una familia.`,
             nombre_familia_existente: conflict.nombre_familia,
             id_familia_existente: conflict.id_familia,
           });
@@ -183,6 +195,9 @@ exports.create = async (req, res) => {
     if (mama_id) miembrosAIngresar.push({ id: mama_id, tipo: 'MADRE' });
     if (Array.isArray(hijos)) {
         hijos.forEach(hID => miembrosAIngresar.push({ id: hID, tipo: 'HIJO' }));
+    }
+    if (Array.isArray(tios)) {
+        tios.forEach(tioId => miembrosAIngresar.push({ id: tioId, tipo: 'TIO_EDI' }));
     }
 
     for (const miembro of miembrosAIngresar) {
