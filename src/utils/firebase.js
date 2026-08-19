@@ -173,35 +173,38 @@ const enviarNotificacionMulticast = async (
   cuerpo,
   data = {}
 ) => {
-  if (!tokens || tokens.length === 0) return;
+  if (!tokens || tokens.length === 0) return { successCount: 0, failureCount: 0 };
 
   const uniqueTokens = [...new Set(tokens)].filter(
     (t) => t && t.length > 10
   );
 
-  if (uniqueTokens.length === 0) return;
+  if (uniqueTokens.length === 0) return { successCount: 0, failureCount: 0 };
 
   try {
-    const message = {
-      notification: { title: titulo, body: cuerpo },
-      data: formatData(data),
-      tokens: uniqueTokens,
-    };
+    let successCount = 0;
+    let failureCount = 0;
+    let firstError = null;
 
-    const response =
-      await admin.messaging().sendEachForMulticast(message);
-
-    console.log(
-      `Push Grupal: ${response.successCount} enviados, ${response.failureCount} fallos.`
-    );
-
-    if (response.failureCount > 0) {
-      const firstError = response.responses.find((r) => !r.success);
-      console.log("Ejemplo de error:", firstError?.error?.message);
+    for (let i = 0; i < uniqueTokens.length; i += 450) {
+      const response = await admin.messaging().sendEachForMulticast({
+        notification: { title: titulo, body: cuerpo },
+        data: formatData(data),
+        tokens: uniqueTokens.slice(i, i + 450),
+      });
+      successCount += response.successCount;
+      failureCount += response.failureCount;
+      firstError ||= response.responses.find((r) => !r.success)?.error;
     }
+
+    console.log(`Push Grupal: ${successCount} enviados, ${failureCount} fallos.`);
+    if (firstError) console.log("Ejemplo de error:", firstError.message);
+
+    return { successCount, failureCount };
 
   } catch (error) {
     console.error("❌ Error Push Multicast:", error.message);
+    return { successCount: 0, failureCount: uniqueTokens.length };
   }
 };
 

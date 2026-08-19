@@ -76,6 +76,7 @@ exports.Q = {
     JOIN EDI.Usuarios u ON u.id_usuario = p.id_usuario
     WHERE p.id_familia IS NULL AND p.categoria_post = N'Institucional' AND p.activo = 1
     ORDER BY p.fecha_publicacion DESC
+    OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
   `,
 
   setEstado: `
@@ -95,7 +96,12 @@ exports.Q = {
     ORDER BY p.created_at DESC
   `,
   toggleLike: `
-    IF EXISTS (SELECT 1 FROM EDI.Publicaciones_Likes WHERE id_post = @id_post AND id_usuario = @id_usuario)
+    SET XACT_ABORT ON;
+    BEGIN TRANSACTION;
+    IF EXISTS (
+      SELECT 1 FROM EDI.Publicaciones_Likes WITH (UPDLOCK, HOLDLOCK)
+      WHERE id_post = @id_post AND id_usuario = @id_usuario
+    )
     BEGIN
         DELETE FROM EDI.Publicaciones_Likes WHERE id_post = @id_post AND id_usuario = @id_usuario;
         SELECT 0 as liked; 
@@ -105,6 +111,7 @@ exports.Q = {
         INSERT INTO EDI.Publicaciones_Likes (id_post, id_usuario) VALUES (@id_post, @id_usuario);
         SELECT 1 as liked;
     END
+    COMMIT TRANSACTION;
   `,
   addComentario: `
     INSERT INTO EDI.Publicaciones_Comentarios (id_post, id_usuario, contenido)
@@ -117,6 +124,7 @@ exports.Q = {
     JOIN EDI.Usuarios u ON u.id_usuario = c.id_usuario
     WHERE c.id_post = @id_post AND c.activo = 1
     ORDER BY c.created_at ASC
+    OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
   `,
   listGlobal: `
   SELECT 

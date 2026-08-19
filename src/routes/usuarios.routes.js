@@ -5,10 +5,11 @@ const F = require('../controllers/familias.controller');
 const validate = require('../utils/validate');
 const { createUserSchema, updateUserSchema } = require('../models/usuario.model');
 const auth = require('../middleware/authGuard')
+const { searchLimiter } = require('../middleware/rateLimits');
 const { saveOptimizedImage } = require('../utils/imageStorage')
 
 //router.get('/', C.list);
-router.get('/', C.searchUsers);
+router.get('/', searchLimiter, C.searchUsers);
 router.get('/familias/by-doc/search', F.searchByDocument);
 router.put('/update-token', C.updateToken);
 // Rutas específicas ANTES de /:id para evitar conflictos

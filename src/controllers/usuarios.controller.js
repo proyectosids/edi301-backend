@@ -136,11 +136,13 @@ exports.searchUsers = async (req, res) => {
       return res.json([]);
     }
 
-    const isNumeric = /^\d+$/.test(q);
+    const numericValue = /^\d+$/.test(q) ? Number(q) : null;
+    const isNumeric = Number.isInteger(numericValue) && numericValue <= 2147483647;
+    if (q.length < 2) return res.json([]);
     const like = `%${q}%`;
 
     const baseSelect = `
-      SELECT
+      SELECT TOP (50)
         u.id_usuario      AS IdUsuario,
         u.nombre          AS Nombre,
         u.apellido        AS Apellido,
@@ -161,10 +163,11 @@ exports.searchUsers = async (req, res) => {
 
     if (isNumeric) {
       if (tipo === 'ALUMNO') {
-        sqlText = `${baseSelect} AND CAST(u.matricula AS NVARCHAR(50)) LIKE @like ORDER BY u.nombre, u.apellido`;
+        sqlText = `${baseSelect} AND u.matricula = @numeric ORDER BY u.nombre, u.apellido`;
       } else {
-        sqlText = `${baseSelect} AND CAST(u.num_empleado AS NVARCHAR(50)) LIKE @like ORDER BY u.nombre, u.apellido`;
+        sqlText = `${baseSelect} AND u.num_empleado = @numeric ORDER BY u.nombre, u.apellido`;
       }
+      params.numeric = { type: sql.Int, value: numericValue };
     } else {
       sqlText = `${baseSelect} AND (u.nombre LIKE @like OR u.apellido LIKE @like) ORDER BY u.nombre, u.apellido`;
     }

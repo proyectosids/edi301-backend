@@ -13,7 +13,14 @@ const dbConfig = {
   server: process.env.DBSERVER || '127.0.0.1', 
   database: process.env.DATABASE,          
   port: Number(process.env.DBPORT || 1433),
-  pool: { max: 10, min: 0, idleTimeoutMillis: 60000 },
+  pool: {
+    max: Number(process.env.DB_POOL_MAX || 10),
+    min: Number(process.env.DB_POOL_MIN || 0),
+    idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_MS || 60000),
+    acquireTimeoutMillis: Number(process.env.DB_POOL_ACQUIRE_MS || 15000),
+  },
+  connectionTimeout: Number(process.env.DB_CONNECTION_TIMEOUT_MS || 10000),
+  requestTimeout: Number(process.env.DB_REQUEST_TIMEOUT_MS || 30000),
   options: {
     encrypt: false,                        
     trustServerCertificate: true,
@@ -22,6 +29,9 @@ const dbConfig = {
 };
 
 const pool = new sql.ConnectionPool(dbConfig);
+pool.on('error', (error) => {
+  console.error('[database] Error inesperado en el pool:', error.message);
+});
 const poolConnect = pool.connect(); // inicia la conexión
 
 async function getConnection() {
@@ -33,10 +43,24 @@ async function queryP(query, params = {}) {
   await poolConnect;
   const request = pool.request();
   for (const [k, v] of Object.entries(params)) {
-    request.input(k, v.type || sql.NVarChar, v.value);
+    if (v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(v, 'value')) {
+      request.input(k, v.type || sql.NVarChar, v.value);
+    } else {
+      request.input(k, v);
+    }
   }
   const result = await request.query(query);
   return result.recordset;
 }
 
-module.exports = { sql, queryP, pool, getConnection };
+async function checkConnection() {
+  await poolConnect;
+  await pool.request().query('SELECT 1 AS ok');
+  return true;
+}
+
+async function closeConnection() {
+  if (pool.connected || pool.connecting) await pool.close();
+}
+
+module.exports = { sql, queryP, pool, getConnection, checkConnection, closeConnection };

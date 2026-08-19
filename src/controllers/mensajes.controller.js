@@ -1,7 +1,7 @@
 const { sql, queryP } = require("../dataBase/dbConnection");
 const { ok, created, bad, fail } = require("../utils/http");
 const { Q } = require("../queries/mensajes.queries");
-const { enviarNotificacionPush } = require("../utils/firebase"); 
+const { enviarNotificacionMulticast } = require("../utils/firebase");
 
 
 exports.create = async (req, res) => {
@@ -69,8 +69,12 @@ exports.unreadCount = async (req, res) => {
 
 exports.listByFamilia = async (req, res) => {
   try {
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 100, 1), 200);
+    const beforeId = Number.parseInt(req.query.before_id, 10);
     const rows = await queryP(Q.listByFamilia, {
       id_familia: { type: sql.Int, value: req.params.id_familia },
+      limit: { type: sql.Int, value: limit },
+      before_id: { type: sql.Int, value: Number.isInteger(beforeId) ? beforeId : null },
     });
     ok(res, rows);
   } catch (e) {
@@ -91,20 +95,16 @@ async function _notificarFamilia(idFamilia, idSender, textoMensaje) {
       id_sender: { type: sql.Int, value: idSender },
     });
 
-    for (const row of tokensRows) {
-      if (row.fcm_token) {
-        await enviarNotificacionPush(
-          row.fcm_token,
-          `Nuevo mensaje de ${nombreSender} 💬`,
-          textoMensaje,
-          {
-            tipo: "CHAT", 
-            id_familia: idFamilia.toString(),
-            id_referencia: idFamilia.toString(), 
-          }
-        );
+    await enviarNotificacionMulticast(
+      tokensRows.map(row => row.fcm_token),
+      `Nuevo mensaje de ${nombreSender} 💬`,
+      textoMensaje,
+      {
+        tipo: "CHAT",
+        id_familia: idFamilia.toString(),
+        id_referencia: idFamilia.toString(),
       }
-    }
+    );
   } catch (e) {
     console.error("Error notificando chat:", e);
   }

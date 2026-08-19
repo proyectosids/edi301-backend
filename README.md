@@ -79,17 +79,49 @@ Flujo:
 3. Configurar variables de entorno (.env)
 
 PORT=3000
-DB_USER=usuario
-DB_PASSWORD=password
-DB_SERVER=localhost
-DB_DATABASE=Edi301
+DBUSER=usuario
+DBPASSWORD=password
+DBSERVER=localhost
+DATABASE=Edi301
+DBPORT=1433
 JWT_SECRET=tu_clave_secreta
+
+# Ajustes opcionales de producción
+DB_POOL_MAX=10
+DB_POOL_MIN=0
+DB_POOL_IDLE_MS=60000
+DB_POOL_ACQUIRE_MS=15000
+DB_CONNECTION_TIMEOUT_MS=10000
+DB_REQUEST_TIMEOUT_MS=30000
+API_RATE_LIMIT=1000
+AUTH_RATE_LIMIT=30
+SEARCH_RATE_LIMIT=60
+IMAGE_CONCURRENCY=2
+TRUST_PROXY_HOPS=1
+CORS_ORIGINS=https://app.ejemplo.com
 
 4. Ejecutar en desarrollo
    npm run dev
 
 5. Ejecutar en producción
-   npm start
+npm start
+
+## Migraciones
+
+Aplicar los scripts de `migrations/` en orden numérico. Antes de desplegar esta
+versión es obligatorio ejecutar:
+
+```text
+migrations/005_performance_and_reliability.sql
+```
+
+La migración es idempotente y no elimina datos. La creación de índices debe
+realizarse primero en staging y fuera de hora pico en producción. Si encuentra
+likes o participantes duplicados, emite una advertencia y omite solamente el
+índice único correspondiente.
+
+La API expone `GET /health` para liveness y `GET /ready` para comprobar SQL
+Server. En CapRover configura el health check con `/health`.
 
 ---
 

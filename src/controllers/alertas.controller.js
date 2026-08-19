@@ -1,24 +1,11 @@
 const { sql, queryP } = require('../dataBase/dbConnection');
-const { ok, created, bad, fail } = require('../utils/http');
-const { enviarNotificacionPush } = require('../utils/firebase');
-const { insertarNotificacion } = require('../utils/notificaciones');
+const { ok, bad, fail } = require('../utils/http');
+const { enviarNotificacionMulticast } = require('../utils/firebase');
+const { insertarNotificacionesUsuariosActivos } = require('../utils/notificaciones');
 
 /**
- * POST /api/alertas/broadcast
- *
- * Body:
- *   tipo     : 'ANUNCIO' | 'PUBLICACION' | 'EVENTO'
- *   titulo   : string  (required)
- *   mensaje  : string  (required)
- *   emoji    : string  (optional – prepended to push title)
- *
- * Behaviour:
- *   1. Inserts an institutional Publicacion (tipo=ANUNCIO) so it shows in the feed.
- *   2. Inserts an EDI.Notificaciones row for every active user.
- *   3. Sends an FCM push to every user that has an fcm_token.
- *   4. Emits a socket event so connected clients update in real-time.
- *
- * Returns { enviados: N, fallidos: M }
+ * Crea el anuncio, registra el historial con una sola consulta y envia FCM
+ * en lotes. Mantiene el contrato { enviados, fallidos, id_post }.
  */
 exports.broadcast = async (req, res) => {
   try {
@@ -27,7 +14,6 @@ exports.broadcast = async (req, res) => {
 
     if (!titulo || !mensaje) return bad(res, 'titulo y mensaje son requeridos');
 
-    // ── 1. Crear publicación institucional en el feed ─────────────────────
     const tipoPost = tipo === 'EVENTO' ? 'EVENTO' : 'ANUNCIO';
     const pubRows = await queryP(
       `INSERT INTO EDI.Publicaciones
@@ -36,57 +22,31 @@ exports.broadcast = async (req, res) => {
          (NULL, @id_usuario, N'Institucional', @mensaje, NULL, 'Publicado', @tipo, 1, GETUTCDATE());
        SELECT CAST(SCOPE_IDENTITY() AS INT) AS id_post;`,
       {
-        id_usuario: { type: sql.Int,      value: creadorId },
-        mensaje:    { type: sql.NVarChar, value: `${emoji} ${titulo}\n\n${mensaje}` },
-        tipo:       { type: sql.NVarChar, value: tipoPost },
+        id_usuario: { type: sql.Int, value: creadorId },
+        mensaje: { type: sql.NVarChar, value: `${emoji} ${titulo}\n\n${mensaje}` },
+        tipo: { type: sql.NVarChar, value: tipoPost },
       }
     );
     const idPost = pubRows[0]?.id_post ?? null;
+    const pushTitle = `${emoji} ${titulo}`;
+    const pushBody = mensaje.length > 120 ? `${mensaje.substring(0, 117)}...` : mensaje;
 
-    // ── 2. Obtener todos los usuarios activos ─────────────────────────────
-    const usuarios = await queryP(
-      `SELECT id_usuario, fcm_token
-       FROM EDI.Usuarios
-       WHERE activo = 1`
+    await insertarNotificacionesUsuariosActivos(pushTitle, pushBody, 'ALERTA', idPost);
+
+    const tokenRows = await queryP(`
+      SELECT s.fcm_token
+      FROM EDI.Usuario_Sesiones s
+      JOIN EDI.Usuarios u ON u.id_usuario = s.id_usuario
+      WHERE u.activo = 1 AND s.activo = 1
+        AND s.fcm_token IS NOT NULL AND LEN(s.fcm_token) > 10
+    `);
+    const pushResult = await enviarNotificacionMulticast(
+      tokenRows.map(row => row.fcm_token),
+      pushTitle,
+      pushBody,
+      { tipo: 'ALERTA', id_referencia: idPost ? idPost.toString() : '' }
     );
 
-    let enviados = 0;
-    let fallidos = 0;
-
-    // ── 3. Insertar notificación + push para cada usuario ─────────────────
-    const pushTitle  = `${emoji} ${titulo}`;
-    const pushBody   = mensaje.length > 120 ? mensaje.substring(0, 117) + '...' : mensaje;
-
-    await Promise.all(
-      usuarios.map(async (u) => {
-        try {
-          // historial de notificaciones (campana)
-          await insertarNotificacion(
-            u.id_usuario,
-            pushTitle,
-            pushBody,
-            'ALERTA',
-            idPost
-          );
-
-          // push FCM
-          if (u.fcm_token) {
-            await enviarNotificacionPush(
-              u.fcm_token,
-              pushTitle,
-              pushBody,
-              { tipo: 'ALERTA', id_referencia: idPost ? idPost.toString() : '' }
-            );
-          }
-          enviados++;
-        } catch (e) {
-          console.error(`[broadcast] error usuario ${u.id_usuario}:`, e?.message);
-          fallidos++;
-        }
-      })
-    );
-
-    // ── 4. Socket: todos los clientes actualizan el feed ─────────────────
     req.io?.emit('alerta_broadcast', {
       titulo,
       mensaje,
@@ -95,7 +55,11 @@ exports.broadcast = async (req, res) => {
       created_at: new Date().toISOString(),
     });
 
-    ok(res, { enviados, fallidos, id_post: idPost });
+    ok(res, {
+      enviados: pushResult.successCount,
+      fallidos: pushResult.failureCount,
+      id_post: idPost,
+    });
   } catch (e) {
     console.error('[broadcast] error general:', e);
     fail(res, e);

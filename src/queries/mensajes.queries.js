@@ -9,7 +9,8 @@ exports.Q = {
   `,
 
   listByFamilia: `
-    SELECT m.id_mensaje, 
+    SELECT * FROM (
+      SELECT TOP (@limit) m.id_mensaje,
            m.contenido as mensaje, 
            m.created_at, 
            m.id_usuario,
@@ -20,7 +21,10 @@ exports.Q = {
     LEFT JOIN EDI.Roles r ON r.id_rol = u.id_rol
     WHERE m.id_familia = @id_familia 
       AND m.activo = 1 
-    ORDER BY m.created_at ASC
+      AND (@before_id IS NULL OR m.id_mensaje < @before_id)
+    ORDER BY m.id_mensaje DESC
+    ) recent
+    ORDER BY id_mensaje ASC
   `,
 
   // Multi-dispositivo: regresa el fcm_token de TODAS las sesiones activas

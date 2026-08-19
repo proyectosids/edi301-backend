@@ -1,5 +1,22 @@
 const { sql, queryP } = require('../dataBase/dbConnection');
 const UQ = require('../queries/usuarios.queries').Q;
+const SESSION_TOUCH_INTERVAL_MS = Number(process.env.SESSION_TOUCH_INTERVAL_MS || 5 * 60 * 1000);
+const recentlyTouched = new Map();
+
+function shouldTouchSession(idSession, databaseTimestamp) {
+  const now = Date.now();
+  const cachedAt = recentlyTouched.get(idSession) || 0;
+  const storedAt = new Date(databaseTimestamp || 0).getTime() || 0;
+  if (now - Math.max(cachedAt, storedAt) < SESSION_TOUCH_INTERVAL_MS) return false;
+  recentlyTouched.set(idSession, now);
+
+  if (recentlyTouched.size > 10000) {
+    for (const [id, touchedAt] of recentlyTouched) {
+      if (now - touchedAt > SESSION_TOUCH_INTERVAL_MS * 2) recentlyTouched.delete(id);
+    }
+  }
+  return true;
+}
 
 module.exports = async function authGuard(req, res, next) {
   try {
@@ -54,9 +71,14 @@ module.exports = async function authGuard(req, res, next) {
 
     // Touch best-effort: refresca last_active_at para que la sesión no
     // sea evictada como "antigua" mientras se está usando.
-    queryP(UQ.touchSession, {
-      id_sesion: { type: sql.Int, value: row.id_sesion },
-    }).catch(err => console.warn('touchSession failed:', err.message));
+    if (shouldTouchSession(row.id_sesion, row.last_active_at)) {
+      queryP(UQ.touchSession, {
+        id_sesion: { type: sql.Int, value: row.id_sesion },
+      }).catch(err => {
+        recentlyTouched.delete(row.id_sesion);
+        console.warn('touchSession failed:', err.message);
+      });
+    }
 
     next();
 

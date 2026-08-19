@@ -26,6 +26,7 @@ exports.Q = {
       AND (@hasta IS NULL OR fecha_evento <= @hasta)
       AND activo = 1
     ORDER BY fecha_evento DESC, id_actividad DESC
+    OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
   `,
 
   update: `

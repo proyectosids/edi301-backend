@@ -1,8 +1,9 @@
-const { sql, queryP, getConnection } = require('../dataBase/dbConnection'); 
+const { sql, queryP } = require('../dataBase/dbConnection');
 const { ok, created, bad, notFound, fail } = require('../utils/http');
 const { Q } = require('../queries/solicitudes.queries');
 const { Q: QU } = require('../queries/usuarios.queries'); 
-const { enviarNotificacionPush } = require('../utils/firebase'); 
+const { enviarNotificacionMulticast } = require('../utils/firebase');
+const { insertarNotificaciones } = require('../utils/notificaciones');
 
 exports.create = async (req, res) => {
   try {
@@ -24,36 +25,28 @@ exports.create = async (req, res) => {
 
     if (nuevaSolicitud) {
         try {
-            const pool = await getConnection();
-            const padresResult = await pool.request()
-                .input('id_familia', sql.Int, id_familia)
-                .query(QU.getTokensPadresPorFamilia);
-
-            const padres = padresResult.recordset;
+            const padres = await queryP(QU.getTokensPadresPorFamilia, {
+              id_familia: { type: sql.Int, value: id_familia },
+            });
 
             console.log(`👨‍👩‍👧 Se encontraron ${padres.length} padres para notificar.`);
 
-            for (const padre of padres) {
-                await pool.request()
-                    .input('id_usuario_destino', sql.Int, padre.id_usuario)
-                    .input('titulo', sql.NVarChar, 'Nueva Solicitud')
-                    .input('cuerpo', sql.NVarChar, 'Un miembro de tu familia solicita aprobación.')
-                    .input('tipo', sql.NVarChar, 'SOLICITUD')
-                    .input('id_referencia', sql.Int, nuevaSolicitud.id_solicitud) 
-                    .query(QU.createNotificacion);
-console.log("TOKEN A ENVIAR:", padre.session_token);
-                if (padre.session_token) {
-                     await enviarNotificacionPush(
-                        padre.session_token,
-                        "Nueva Solicitud Familiar 📩",
-                        "Tu hijo ha enviado una solicitud pendiente de aprobación.",
-                        { 
-                            tipo: 'SOLICITUD', 
-                            id_solicitud: nuevaSolicitud.id_solicitud ? nuevaSolicitud.id_solicitud.toString() : '0' 
-                        }
-                    );
-                }
-            }
+            await insertarNotificaciones(
+              padres.map(padre => padre.id_usuario),
+              'Nueva Solicitud',
+              'Un miembro de tu familia solicita aprobación.',
+              'SOLICITUD',
+              nuevaSolicitud.id_solicitud
+            );
+            await enviarNotificacionMulticast(
+              padres.map(padre => padre.session_token),
+              'Nueva Solicitud Familiar 📩',
+              'Tu hijo ha enviado una solicitud pendiente de aprobación.',
+              {
+                tipo: 'SOLICITUD',
+                id_solicitud: nuevaSolicitud.id_solicitud ? nuevaSolicitud.id_solicitud.toString() : '0'
+              }
+            );
         } catch (notifError) {
             console.error("Error enviando notificaciones (La solicitud sí se creó):", notifError);
         }

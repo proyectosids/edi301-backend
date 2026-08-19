@@ -5,6 +5,7 @@ const MiembrosQ = require('../queries/miembros.queries').Q;
 const { saveOptimizedImage } = require('../utils/imageStorage');
 const { enviarNotificacionMulticast } = require('../utils/firebase');
 const { getActiveFcmTokensForUsers } = require('../utils/sessions');
+const { insertarNotificaciones } = require('../utils/notificaciones');
 const { getEdiChildLimit, limitError } = require('../utils/familyChildLimit');
 const withBase = (tpl) => tpl.replace('{{BASE}}', Q.base);
 
@@ -200,14 +201,18 @@ exports.create = async (req, res) => {
         tios.forEach(tioId => miembrosAIngresar.push({ id: tioId, tipo: 'TIO_EDI' }));
     }
 
-    for (const miembro of miembrosAIngresar) {
+    if (miembrosAIngresar.length > 0) {
       const mReq = new sql.Request(transaction);
-      mReq.input('id_familia', sql.Int, id_familia);
-      mReq.input('id_usuario', sql.Int, miembro.id);
-      mReq.input('tipo', sql.NVarChar, miembro.tipo);
+      mReq.input('miembros_id_familia', sql.Int, id_familia);
+      const values = miembrosAIngresar.map((miembro, index) => {
+        mReq.input(`miembro_id_${index}`, sql.Int, miembro.id);
+        mReq.input(`miembro_tipo_${index}`, sql.NVarChar, miembro.tipo);
+        return `(@miembros_id_familia, @miembro_id_${index}, @miembro_tipo_${index}, 1, SYSUTCDATETIME())`;
+      });
       await mReq.query(`
-        INSERT INTO EDI.Miembros_Familia (id_familia, id_usuario, tipo_miembro, activo, created_at)
-        VALUES (@id_familia, @id_usuario, @tipo, 1, SYSDATETIME())
+        INSERT INTO EDI.Miembros_Familia
+          (id_familia, id_usuario, tipo_miembro, activo, created_at)
+        VALUES ${values.join(',')};
       `);
     }
 
@@ -217,19 +222,13 @@ exports.create = async (req, res) => {
     try {
         const idsPadres = [papa_id, mama_id].filter(id => id);
         if (idsPadres.length > 0) {
-            // Insertar UNA fila de notificación por usuario.
-            for (const idPadre of idsPadres) {
-                await queryP(`
-                    INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
-                    VALUES (@uid, @tit, @body, @tipo, @ref, 0, GETUTCDATE())
-                `, {
-                    uid: { type: sql.Int, value: Number(idPadre) },
-                    tit: { type: sql.NVarChar, value: '¡Familia Creada! 🏠' },
-                    body: { type: sql.NVarChar, value: `Bienvenidos a la familia "${nombre_familia}".` },
-                    tipo: { type: sql.NVarChar, value: 'FAMILIA_CREADA' },
-                    ref: { type: sql.Int, value: id_familia }
-                }).catch(e => console.error("Error BD Notif Padre:", e.message));
-            }
+            await insertarNotificaciones(
+                idsPadres,
+                '¡Familia Creada! 🏠',
+                `Bienvenidos a la familia "${nombre_familia}".`,
+                'FAMILIA_CREADA',
+                id_familia
+            ).catch(e => console.error("Error BD Notif Padre:", e.message));
 
             // Multi-dispositivo: obtener fcm_tokens de TODAS las sesiones
             // activas de los padres y mandar push a cada device.
@@ -241,19 +240,13 @@ exports.create = async (req, res) => {
         }
 
         if (hijos.length > 0) {
-            // Insertar UNA fila de notificación por hijo.
-            for (const idHijo of hijos) {
-                await queryP(`
-                    INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
-                    VALUES (@uid, @tit, @body, @tipo, @ref, 0, GETUTCDATE())
-                `, {
-                    uid: { type: sql.Int, value: Number(idHijo) },
-                    tit: { type: sql.NVarChar, value: 'Nueva Asignación 🎒' },
-                    body: { type: sql.NVarChar, value: `Has sido asignado a la familia "${nombre_familia}".` },
-                    tipo: { type: sql.NVarChar, value: 'ASIGNACION' },
-                    ref: { type: sql.Int, value: id_familia }
-                }).catch(e => console.error("Error BD Notif Hijo:", e.message));
-            }
+            await insertarNotificaciones(
+                hijos,
+                'Nueva Asignación 🎒',
+                `Has sido asignado a la familia "${nombre_familia}".`,
+                'ASIGNACION',
+                id_familia
+            ).catch(e => console.error("Error BD Notif Hijo:", e.message));
 
             // Multi-dispositivo: fan-out a todas las sesiones activas de cada hijo.
             const tokensHijos = await getActiveFcmTokensForUsers(hijos);

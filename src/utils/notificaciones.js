@@ -32,4 +32,65 @@ async function insertarNotificacion(idDestino, titulo, cuerpo, tipo, idRef = nul
   }
 }
 
-module.exports = { insertarNotificacion };
+function normalizarIds(idsUsuarios) {
+  return [...new Set((idsUsuarios || [])
+    .map(Number)
+    .filter(id => Number.isInteger(id) && id > 0))];
+}
+
+async function insertarNotificaciones(idsUsuarios, titulo, cuerpo, tipo, idRef = null) {
+  const ids = normalizarIds(idsUsuarios);
+  if (!ids.length) return 0;
+
+  try {
+    const rows = await queryP(`
+      INSERT INTO EDI.Notificaciones
+        (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
+      SELECT u.id_usuario, @titulo, @cuerpo, @tipo, @ref, 0, GETUTCDATE()
+      FROM EDI.Usuarios u
+      WHERE u.id_usuario IN (${ids.join(',')});
+
+      SELECT @@ROWCOUNT AS total;
+    `, {
+      titulo: { type: sql.NVarChar, value: titulo },
+      cuerpo: { type: sql.NVarChar, value: cuerpo },
+      tipo:   { type: sql.NVarChar, value: tipo },
+      ref:    { type: sql.Int,      value: idRef },
+    });
+
+    return Number(rows[0]?.total || 0);
+  } catch (error) {
+    console.error(`[notif] Error insertando lote tipo=${tipo}:`, error?.message);
+    return 0;
+  }
+}
+
+async function insertarNotificacionesUsuariosActivos(titulo, cuerpo, tipo, idRef = null) {
+  try {
+    const rows = await queryP(`
+      INSERT INTO EDI.Notificaciones
+        (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
+      SELECT u.id_usuario, @titulo, @cuerpo, @tipo, @ref, 0, GETUTCDATE()
+      FROM EDI.Usuarios u
+      WHERE u.activo = 1;
+
+      SELECT @@ROWCOUNT AS total;
+    `, {
+      titulo: { type: sql.NVarChar, value: titulo },
+      cuerpo: { type: sql.NVarChar, value: cuerpo },
+      tipo:   { type: sql.NVarChar, value: tipo },
+      ref:    { type: sql.Int,      value: idRef },
+    });
+
+    return Number(rows[0]?.total || 0);
+  } catch (error) {
+    console.error(`[notif] Error insertando broadcast tipo=${tipo}:`, error?.message);
+    return 0;
+  }
+}
+
+module.exports = {
+  insertarNotificacion,
+  insertarNotificaciones,
+  insertarNotificacionesUsuariosActivos,
+};

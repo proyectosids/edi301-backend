@@ -1,7 +1,7 @@
 const { sql, queryP } = require('../dataBase/dbConnection');
 const { ok, created, bad, notFound, fail } = require('../utils/http');
 const { Q } = require('../queries/agenda.queries');
-const { enviarNotificacionPush } = require('../utils/firebase');
+const { enviarNotificacionMulticast } = require('../utils/firebase');
 const { saveOptimizedImage } = require('../utils/imageStorage');
 
 exports.create = async (req, res) => {
@@ -42,19 +42,19 @@ exports.create = async (req, res) => {
 
     (async () => {
       try {
-        const usuarios = await queryP(
-          'SELECT fcm_token FROM EDI.Usuarios WHERE fcm_token IS NOT NULL AND activo = 1'
+        const usuarios = await queryP(`
+          SELECT s.fcm_token
+          FROM EDI.Usuario_Sesiones s
+          JOIN EDI.Usuarios u ON u.id_usuario = s.id_usuario
+          WHERE u.activo = 1 AND s.activo = 1
+            AND s.fcm_token IS NOT NULL AND LEN(s.fcm_token) > 10
+        `);
+        await enviarNotificacionMulticast(
+          usuarios.map(u => u.fcm_token),
+          '📅 Nuevo Evento',
+          `${titulo}`,
+          { tipo: 'EVENTO', id_referencia: rows[0].id_actividad.toString() }
         );
-        if (usuarios && usuarios.length > 0) {
-          for (const u of usuarios) {
-            await enviarNotificacionPush(
-              u.fcm_token,
-              '📅 Nuevo Evento',
-              `${titulo}`,
-              { tipo: 'EVENTO', id_referencia: rows[0].id_actividad.toString() }
-            );
-          }
-        }
       } catch (e) {
         console.error('Error notificaciones:', e);
       }
@@ -114,10 +114,14 @@ exports.update = async (req, res) => {
 exports.list = async (req, res) => {
   try {
     const { estado, desde, hasta } = req.query;
+    const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 100, 1), 200);
     ok(res, await queryP(Q.list, {
       estado: { type: sql.NVarChar, value: estado ?? null },
       desde:  { type: sql.Date, value: desde ?? null },
       hasta:  { type: sql.Date, value: hasta ?? null },
+      offset: { type: sql.Int, value: (page - 1) * limit },
+      limit:  { type: sql.Int, value: limit },
     }));
   } catch (e) { fail(res, e); }
 };

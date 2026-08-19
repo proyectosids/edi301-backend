@@ -8,7 +8,7 @@ const { sql, queryP } = require('../dataBase/dbConnection');
 const { ok, bad, fail, notFound } = require('../utils/http');
 const { Q } = require('../queries/renovaciones.queries');
 const { enviarNotificacionMulticast } = require('../utils/firebase');
-const { insertarNotificacion } = require('../utils/notificaciones');
+const { insertarNotificacion, insertarNotificaciones } = require('../utils/notificaciones');
 const { getActiveFcmTokensForUsers } = require('../utils/sessions');
 
 const CONFIG_KEY = 'renovacion_ciclo_abierta';
@@ -96,15 +96,13 @@ exports.solicitarRenovacion = async (req, res) => {
     const nombreAlumno = `${req.user.nombre || ''} ${req.user.apellido || ''}`.trim();
 
     // Notificación en historial
-    for (const idTutor of idsTutores) {
-      await insertarNotificacion(
-        idTutor,
-        '🔄 Solicitud de renovación',
-        `${nombreAlumno} solicita renovar su pertenencia a la familia para el próximo ciclo.`,
-        'RENOVACION_CICLO',
-        ins[0].id_solicitud,
-      ).catch(() => {});
-    }
+    await insertarNotificaciones(
+      idsTutores,
+      '🔄 Solicitud de renovación',
+      `${nombreAlumno} solicita renovar su pertenencia a la familia para el próximo ciclo.`,
+      'RENOVACION_CICLO',
+      ins[0].id_solicitud,
+    ).catch(() => {});
 
     // Push multi-dispositivo
     const tokens = await getActiveFcmTokensForUsers(idsTutores);
@@ -310,17 +308,35 @@ exports.vaciarFamilias = async (req, res) => {
   try {
     if (!isAdmin(req)) return res.status(403).json({ error: 'Solo admin' });
 
-    // 1) Soft-delete a alumnos no renovados.
-    const removidos = await queryP(Q.vaciarAlumnosNoRenovados, {});
+    // Los cuatro cambios del cierre de ciclo deben confirmarse juntos.
+    const removidos = await queryP(`
+      SET XACT_ABORT ON;
+      BEGIN TRANSACTION;
+      DECLARE @removidos TABLE (id_usuario INT, id_familia INT);
 
-    // 2) Limpiar flag a los que sí renovaron (para el próximo ciclo).
-    await queryP(Q.limpiarFlagRenovacion, {});
+      UPDATE EDI.Miembros_Familia
+      SET activo = 0, updated_at = GETUTCDATE()
+      OUTPUT DELETED.id_usuario, DELETED.id_familia INTO @removidos
+      WHERE activo = 1
+        AND tipo_miembro IN ('Alumno','ALUMNO','HIJO','Hijo')
+        AND renovacion_aprobada_at IS NULL;
 
-    // 3) Archivar todas las solicitudes (ciclo cerrado).
-    await queryP(Q.archivarSolicitudesRenovacion, {});
+      UPDATE EDI.Miembros_Familia
+      SET renovacion_aprobada_at = NULL, updated_at = GETUTCDATE()
+      WHERE activo = 1 AND renovacion_aprobada_at IS NOT NULL;
 
-    // 4) Cerrar la ventana automáticamente.
-    await queryP(Q.upsertConfig, {
+      UPDATE EDI.Solicitudes_Familia
+      SET activo = 0, updated_at = GETUTCDATE()
+      WHERE tipo_solicitud = 'RENOVACION_CICLO' AND activo = 1;
+
+      IF EXISTS (SELECT 1 FROM EDI.App_Config WHERE clave = @clave)
+        UPDATE EDI.App_Config SET valor = @valor, updated_at = GETUTCDATE() WHERE clave = @clave;
+      ELSE
+        INSERT INTO EDI.App_Config (clave, valor, descripcion) VALUES (@clave, @valor, @descripcion);
+
+      COMMIT TRANSACTION;
+      SELECT id_usuario, id_familia FROM @removidos;
+    `, {
       clave:       { type: sql.NVarChar, value: CONFIG_KEY },
       valor:       { type: sql.NVarChar, value: 'false' },
       descripcion: { type: sql.NVarChar, value: 'Ventana de renovación de familias' },
@@ -328,15 +344,13 @@ exports.vaciarFamilias = async (req, res) => {
 
     // 5) Notificar a los alumnos removidos.
     const idsRemovidos = [...new Set(removidos.map(r => r.id_usuario))];
-    for (const idAlumno of idsRemovidos) {
-      await insertarNotificacion(
-        idAlumno,
-        '👋 Cambio de ciclo escolar',
-        'Tu pertenencia a la familia se cerró por inicio de un nuevo ciclo escolar. ¡Te esperamos en una nueva familia!',
-        'CICLO_CERRADO',
-        null,
-      ).catch(() => {});
-    }
+    await insertarNotificaciones(
+      idsRemovidos,
+      '👋 Cambio de ciclo escolar',
+      'Tu pertenencia a la familia se cerró por inicio de un nuevo ciclo escolar. ¡Te esperamos en una nueva familia!',
+      'CICLO_CERRADO',
+      null,
+    ).catch(() => {});
     const tokens = await getActiveFcmTokensForUsers(idsRemovidos);
     if (tokens.length > 0) {
       await enviarNotificacionMulticast(

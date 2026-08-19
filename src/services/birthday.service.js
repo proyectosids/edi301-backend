@@ -1,7 +1,10 @@
 const cron = require('node-cron');
-const { sql, queryP } = require('../dataBase/dbConnection');
+const { sql, queryP, pool } = require('../dataBase/dbConnection');
 const { enviarNotificacionMulticast } = require('../utils/firebase');
-const { insertarNotificacion } = require('../utils/notificaciones');
+const {
+  insertarNotificaciones,
+  insertarNotificacionesUsuariosActivos,
+} = require('../utils/notificaciones');
 const ID_AUTOR_SISTEMA = 1; 
 let IMAGEN_CUMPLEANOS = '/uploads/image.png';
 const getImagenCumpleanos = () => IMAGEN_CUMPLEANOS;
@@ -100,15 +103,13 @@ const verificarCumpleanos = async () => {
           WHERE mf.id_familia = @idFam AND u.activo = 1
         `, { idFam: { type: sql.Int, value: user.id_familia } });
 
-        for (const f of familiaresTodos) {
-          await insertarNotificacion(
-            f.id_usuario,
-            '🎉 ¡Cumpleaños en la familia!',
-            `Hoy es el cumpleaños de ${nombreCompleto}. ¡Entra a felicitarlo!`,
-            'CUMPLEANOS',
-            idPost
-          );
-        }
+        await insertarNotificaciones(
+          familiaresTodos.map(f => f.id_usuario),
+          '🎉 ¡Cumpleaños en la familia!',
+          `Hoy es el cumpleaños de ${nombreCompleto}. ¡Entra a felicitarlo!`,
+          'CUMPLEANOS',
+          idPost
+        );
       }
     }
 
@@ -171,42 +172,107 @@ const enviarRecordatorioOracion = async () => {
     const body = frase;
 
     // FCM permite hasta 500 tokens por multicast
-    const batches = _chunk(tokens, 450);
-
-    for (const batch of batches) {
-      await enviarNotificacionMulticast(batch, title, body, {
-        tipo: 'ORACION_NOON',
-      });
-    }
+    await enviarNotificacionMulticast(tokens, title, body, { tipo: 'ORACION_NOON' });
 
     console.log(`🙏 Recordatorio de oración enviado a ${tokens.length} dispositivos.`);
 
     // Insertar notificación ORACION en historial para todos los usuarios activos
-    const allUsers = await queryP(`SELECT id_usuario FROM EDI.Usuarios WHERE activo = 1`);
-    for (const u of allUsers) {
-      await insertarNotificacion(
-        u.id_usuario,
-        '🕛 Momento de oración',
-        frase,
-        'ORACION',
-        null
-      );
-    }
+    await insertarNotificacionesUsuariosActivos(
+      '🕛 Momento de oración',
+      frase,
+      'ORACION',
+      null
+    );
   } catch (error) {
     console.error('Error en recordatorio de oración:', error);
   }
 };
 
-const initCronJobs = () => {
-  cron.schedule('0 8 * * *', () => {
-    verificarCumpleanos();
-  }, { timezone: "America/Mexico_City" });
+async function withDistributedJobLock(resource, work) {
+  const transaction = new sql.Transaction(pool);
+  let started = false;
+  let claimed = false;
+  try {
+    await transaction.begin();
+    started = true;
+    const request = new sql.Request(transaction);
+    request.input('resource', sql.NVarChar, resource);
+    const lock = await request.query(`
+      DECLARE @result INT;
+      EXEC @result = sys.sp_getapplock
+        @Resource = @resource,
+        @LockMode = 'Exclusive',
+        @LockOwner = 'Transaction',
+        @LockTimeout = 0;
+      SELECT @result AS lock_result;
+    `);
+    if (Number(lock.recordset[0]?.lock_result) < 0) {
+      await transaction.rollback();
+      return false;
+    }
+    const claimRequest = new sql.Request(transaction);
+    claimRequest.input('resource', sql.NVarChar, resource);
+    const claim = await claimRequest.query(`
+      IF EXISTS (SELECT 1 FROM EDI.Job_Ejecuciones WHERE clave_job = @resource)
+        SELECT CAST(0 AS BIT) AS claimed;
+      ELSE
+      BEGIN
+        INSERT INTO EDI.Job_Ejecuciones (clave_job) VALUES (@resource);
+        SELECT CAST(1 AS BIT) AS claimed;
+      END;
+    `);
+    claimed = Boolean(claim.recordset[0]?.claimed);
+    if (!claimed) {
+      await transaction.rollback();
+      return false;
+    }
+    await transaction.commit();
+    started = false;
+    await work();
+    return true;
+  } catch (error) {
+    if (started) {
+      try { await transaction.rollback(); } catch (_) {}
+    }
+    if (claimed && !started) {
+      try {
+        await queryP('DELETE FROM EDI.Job_Ejecuciones WHERE clave_job = @resource', {
+          resource: { type: sql.NVarChar, value: resource },
+        });
+      } catch (_) {}
+    }
+    throw error;
+  }
+}
 
-  cron.schedule('0 12 * * *', () => {
-    enviarRecordatorioOracion();
-  }, { timezone: "America/Mexico_City" });
+function dailyJobKey(name) {
+  const day = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Mexico_City',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+  return `edi301:cron:${name}:${day}`;
+}
+
+const initCronJobs = () => {
+  const jobs = [];
+  jobs.push(cron.schedule('0 8 * * *', async () => {
+    try {
+      await withDistributedJobLock(dailyJobKey('cumpleanos'), verificarCumpleanos);
+    } catch (error) {
+      console.error('Error ejecutando cron de cumpleaños:', error);
+    }
+  }, { timezone: "America/Mexico_City" }));
+
+  jobs.push(cron.schedule('0 12 * * *', async () => {
+    try {
+      await withDistributedJobLock(dailyJobKey('oracion'), enviarRecordatorioOracion);
+    } catch (error) {
+      console.error('Error ejecutando cron de oración:', error);
+    }
+  }, { timezone: "America/Mexico_City" }));
 
   console.log('Cron Jobs iniciados.');
+  return () => jobs.forEach(job => job.stop());
 };
 
 module.exports = { initCronJobs, getImagenCumpleanos, setImagenCumpleanos };

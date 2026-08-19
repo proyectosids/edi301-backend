@@ -258,8 +258,9 @@ exports.Q = {
   // Actualiza last_active_at en cada request autenticado (lo llama authGuard).
   touchSession: `
     UPDATE EDI.Usuario_Sesiones
-    SET last_active_at = GETDATE()
-    WHERE id_sesion = @id_sesion;
+    SET last_active_at = GETUTCDATE()
+    WHERE id_sesion = @id_sesion
+      AND last_active_at < DATEADD(MINUTE, -5, GETUTCDATE());
   `,
 
   // Actualiza el fcm_token de una sesión específica.

@@ -2,9 +2,9 @@ const { sql, queryP } = require("../dataBase/dbConnection");
 const { ok, created, bad, notFound, fail } = require("../utils/http");
 const { Q } = require("../queries/publicaciones.queries");
 const { Q: AgendaQ } = require("../queries/agenda.queries");
-const { enviarNotificacionPush } = require("../utils/firebase");
+const { enviarNotificacionPush, enviarNotificacionMulticast } = require("../utils/firebase");
 const { saveOptimizedImage } = require("../utils/imageStorage");
-const { insertarNotificacion } = require("../utils/notificaciones");
+const { insertarNotificacion, insertarNotificaciones } = require("../utils/notificaciones");
 
 exports.create = async (req, res) => {
   try {
@@ -68,29 +68,19 @@ exports.create = async (req, res) => {
       const titSolicitud = 'Solicitud de Publicación 📝';
       const cuerpoSolicitud = `${usuario.nombre} quiere subir un ${tipoFinal === 'STORY' ? 'historia' : 'post'}. Toca para revisar.`;
 
-      for (const padre of padres) {
-        // Push solo si tiene token
-        if (padre.fcm_token) {
-          try {
-            await enviarNotificacionPush(
-              padre.fcm_token,
-              titSolicitud,
-              cuerpoSolicitud,
-              { tipo: 'SOLICITUD', id_referencia: post.id_post.toString() }
-            );
-          } catch (pushErr) {
-            console.error('Error enviando push de solicitud:', pushErr);
-          }
-        }
-        // Siempre insertar en historial de notificaciones
-        await insertarNotificacion(
-          padre.id_usuario,
-          titSolicitud,
-          cuerpoSolicitud,
-          'SOLICITUD',
-          post.id_post
-        );
-      }
+      await enviarNotificacionMulticast(
+        padres.map(padre => padre.fcm_token),
+        titSolicitud,
+        cuerpoSolicitud,
+        { tipo: 'SOLICITUD', id_referencia: post.id_post.toString() }
+      );
+      await insertarNotificaciones(
+        padres.map(padre => padre.id_usuario),
+        titSolicitud,
+        cuerpoSolicitud,
+        'SOLICITUD',
+        post.id_post
+      );
     } else {
       console.log(`Publicación creada directamente por ${rol} (${usuario.nombre})`);
     }
@@ -106,41 +96,35 @@ exports.create = async (req, res) => {
           id_familia:         { type: sql.Int, value: post.id_familia },
           id_usuario_excluir: { type: sql.Int, value: id_usuario },
         });
-        for (const d of destinatarios) {
-          if (!d.fcm_token) continue;
-          try {
-            await enviarNotificacionPush(d.fcm_token, titNueva, cuerpoNueva, {
-              tipo: 'NUEVA_PUBLICACION',
-              id_referencia: post.id_post.toString(),
-            });
-          } catch (pushErr) {
-            console.error('Error enviando push de nueva publicación:', pushErr);
-          }
-        }
+        await enviarNotificacionMulticast(
+          destinatarios.map(d => d.fcm_token),
+          titNueva,
+          cuerpoNueva,
+          { tipo: 'NUEVA_PUBLICACION', id_referencia: post.id_post.toString() }
+        );
         // Historial de notificaciones para TODOS los miembros de la familia
         const todosFamilia = await queryP(Q.getAllFamilyMembers, {
           id_familia:          { type: sql.Int, value: post.id_familia },
           id_usuario_excluir:  { type: sql.Int, value: id_usuario },
         });
-        for (const m of todosFamilia) {
-          await insertarNotificacion(m.id_usuario, titNueva, cuerpoNueva, 'NUEVA_PUBLICACION', post.id_post);
-        }
+        await insertarNotificaciones(
+          todosFamilia.map(m => m.id_usuario),
+          titNueva,
+          cuerpoNueva,
+          'NUEVA_PUBLICACION',
+          post.id_post
+        );
       } else {
         // Post institucional: solo FCM (notificar a todos sería demasiados registros)
         const destinatarios = await queryP(Q.getGlobalTokensForPostNotification, {
           id_usuario_excluir: { type: sql.Int, value: id_usuario },
         });
-        for (const d of destinatarios) {
-          if (!d.fcm_token) continue;
-          try {
-            await enviarNotificacionPush(d.fcm_token, titNueva, cuerpoNueva, {
-              tipo: 'NUEVA_PUBLICACION',
-              id_referencia: post.id_post.toString(),
-            });
-          } catch (pushErr) {
-            console.error('Error enviando push de nueva publicación:', pushErr);
-          }
-        }
+        await enviarNotificacionMulticast(
+          destinatarios.map(d => d.fcm_token),
+          titNueva,
+          cuerpoNueva,
+          { tipo: 'NUEVA_PUBLICACION', id_referencia: post.id_post.toString() }
+        );
       }
     }
 
@@ -191,9 +175,14 @@ exports.listByFamilia = async (req, res) => {
   }
 };
 
-exports.listInstitucional = async (_req, res) => {
+exports.listInstitucional = async (req, res) => {
   try {
-    ok(res, await queryP(Q.listInstitucional));
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 50, 1), 100);
+    ok(res, await queryP(Q.listInstitucional, {
+      offset: { type: sql.Int, value: (page - 1) * limit },
+      limit: { type: sql.Int, value: limit },
+    }));
   } catch (e) {
     fail(res, e);
   }
@@ -264,24 +253,25 @@ exports.setEstado = async (req, res) => {
             id_familia:         { type: sql.Int, value: idFamilia },
             id_usuario_excluir: { type: sql.Int, value: autorId },
           });
-          for (const m of miembrosConToken) {
-            if (!m.fcm_token) continue;
-            try {
-              await enviarNotificacionPush(m.fcm_token, titNueva, cuerpoNueva, {
-                tipo: 'NUEVA_PUBLICACION',
-                id_referencia: idPost.toString(),
-              });
-            } catch (_) {}
-          }
+          await enviarNotificacionMulticast(
+            miembrosConToken.map(m => m.fcm_token),
+            titNueva,
+            cuerpoNueva,
+            { tipo: 'NUEVA_PUBLICACION', id_referencia: idPost.toString() }
+          );
 
           // Historial para todos los miembros de la familia
           const todosMiembros = await queryP(Q.getAllFamilyMembers, {
             id_familia:         { type: sql.Int, value: idFamilia },
             id_usuario_excluir: { type: sql.Int, value: autorId },
           });
-          for (const m of todosMiembros) {
-            await insertarNotificacion(m.id_usuario, titNueva, cuerpoNueva, 'NUEVA_PUBLICACION', idPost);
-          }
+          await insertarNotificaciones(
+            todosMiembros.map(m => m.id_usuario),
+            titNueva,
+            cuerpoNueva,
+            'NUEVA_PUBLICACION',
+            idPost
+          );
         }
       }
     }
@@ -500,8 +490,12 @@ exports.addComentario = async (req, res) => {
 exports.getComentarios = async (req, res) => {
   try {
     const id_post = Number(req.params.id);
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 200);
     const rows = await queryP(Q.getComentarios, {
       id_post: { type: sql.Int, value: id_post },
+      offset: { type: sql.Int, value: (page - 1) * limit },
+      limit: { type: sql.Int, value: limit },
     });
     ok(res, rows);
   } catch (e) {

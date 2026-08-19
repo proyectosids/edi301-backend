@@ -1,17 +1,24 @@
 const { sql, queryP } = require('../dataBase/dbConnection');
 const { ok, bad, notFound, fail } = require('../utils/http');
+const { getPagination } = require('../utils/pagination');
 
 // GET /api/notificaciones  → lista todas las notificaciones del usuario autenticado
 exports.list = async (req, res) => {
   try {
     const idUsuario = req.user.id_usuario;
+    const { limit, offset } = getPagination(req.query);
     const rows = await queryP(`
       SELECT id, id_usuario_destino, titulo, cuerpo, tipo,
              id_referencia, leido, fecha_creacion
       FROM EDI.Notificaciones
       WHERE id_usuario_destino = @uid
       ORDER BY fecha_creacion DESC
-    `, { uid: { type: sql.Int, value: idUsuario } });
+      OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
+    `, {
+      uid: { type: sql.Int, value: idUsuario },
+      offset: { type: sql.Int, value: offset },
+      limit: { type: sql.Int, value: limit },
+    });
 
     ok(res, rows);
   } catch (e) { fail(res, e); }

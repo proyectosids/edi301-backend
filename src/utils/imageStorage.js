@@ -11,6 +11,22 @@ const ALLOWED_MIME_TYPES = [
 ];
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.bmp', '.tiff', '.tif'];
 const MAX_BYTES = 5 * 1024 * 1024;
+const MAX_CONCURRENT_IMAGES = Math.max(Number(process.env.IMAGE_CONCURRENCY || 2), 1);
+let activeImages = 0;
+const imageQueue = [];
+
+async function withImageSlot(work) {
+  if (activeImages >= MAX_CONCURRENT_IMAGES) {
+    await new Promise(resolve => imageQueue.push(resolve));
+  }
+  activeImages++;
+  try {
+    return await work();
+  } finally {
+    activeImages--;
+    imageQueue.shift()?.();
+  }
+}
 
 function isImageFile(file) {
   if (!file) return false;
@@ -32,7 +48,7 @@ async function getInputBuffer(file) {
 
   if (file.tempFilePath) {
     const buffer = await fs.promises.readFile(file.tempFilePath);
-    try { fs.unlinkSync(file.tempFilePath); } catch (_) {}
+    try { await fs.promises.unlink(file.tempFilePath); } catch (_) {}
     return buffer;
   }
 
@@ -77,49 +93,48 @@ async function saveOptimizedImage(
   if (!file) return null;
 
   validateImageFile(file);
+  return withImageSlot(async () => {
+    const inputBuffer = await getInputBuffer(file);
+    const outputBuffer = await sharp(inputBuffer)
+      .rotate()
+      .resize({
+        width: maxW,
+        height: maxH,
+        fit,
+        withoutEnlargement: true,
+      })
+      .webp({ quality })
+      .toBuffer();
 
-  const inputBuffer = await getInputBuffer(file);
-  const outputBuffer = await sharp(inputBuffer)
-    .rotate()
-    .resize({
-      width: maxW,
-      height: maxH,
-      fit,
-      withoutEnlargement: true,
-    })
-    .webp({ quality })
-    .toBuffer();
-
-  const publicId = `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-
-  const result = await uploadBufferToCloudinary(outputBuffer, {
-    folder,
-    publicId,
-    resourceType: 'image',
+    const publicId = `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    const result = await uploadBufferToCloudinary(outputBuffer, {
+      folder,
+      publicId,
+      resourceType: 'image',
+    });
+    return result.secure_url;
   });
-
-  return result.secure_url;
 }
 
 async function saveOptimizedProfilePhoto(file, userId) {
   if (!file) return null;
 
   validateImageFile(file);
+  return withImageSlot(async () => {
+    const inputBuffer = await getInputBuffer(file);
+    const outputBuffer = await sharp(inputBuffer)
+      .rotate()
+      .resize(512, 512, { fit: 'cover' })
+      .webp({ quality: 80 })
+      .toBuffer();
 
-  const inputBuffer = await getInputBuffer(file);
-  const outputBuffer = await sharp(inputBuffer)
-    .rotate()
-    .resize(512, 512, { fit: 'cover' })
-    .webp({ quality: 80 })
-    .toBuffer();
-
-  const result = await uploadBufferToCloudinary(outputBuffer, {
-    folder: 'edi301/profiles',
-    publicId: `perfil-${userId}-${Date.now()}`,
-    resourceType: 'image',
+    const result = await uploadBufferToCloudinary(outputBuffer, {
+      folder: 'edi301/profiles',
+      publicId: `perfil-${userId}-${Date.now()}`,
+      resourceType: 'image',
+    });
+    return result.secure_url;
   });
-
-  return result.secure_url;
 }
 
 module.exports = {

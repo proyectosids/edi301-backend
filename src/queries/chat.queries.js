@@ -1,4 +1,49 @@
 exports.Q = {
+  initPrivateChat: `
+    SET XACT_ABORT ON;
+    BEGIN TRANSACTION;
+
+    DECLARE @lockResult INT;
+    DECLARE @resource NVARCHAR(255) = CONCAT(
+      'chat-private:',
+      CASE WHEN @my_id < @other_id THEN @my_id ELSE @other_id END,
+      ':',
+      CASE WHEN @my_id < @other_id THEN @other_id ELSE @my_id END
+    );
+    EXEC @lockResult = sys.sp_getapplock
+      @Resource = @resource,
+      @LockMode = 'Exclusive',
+      @LockOwner = 'Transaction',
+      @LockTimeout = 5000;
+
+    IF @lockResult < 0
+    BEGIN
+      ROLLBACK TRANSACTION;
+      THROW 51000, 'No se pudo adquirir el bloqueo para crear el chat.', 1;
+    END;
+
+    DECLARE @id_sala INT;
+    SELECT TOP 1 @id_sala = p1.id_sala
+    FROM EDI.Chat_Participantes p1
+    JOIN EDI.Chat_Participantes p2 ON p1.id_sala = p2.id_sala
+    JOIN EDI.Chat_Salas s ON s.id_sala = p1.id_sala
+    WHERE s.tipo = 'PRIVADO' AND s.activo = 1
+      AND p1.id_usuario = @my_id AND p2.id_usuario = @other_id;
+
+    DECLARE @created BIT = 0;
+    IF @id_sala IS NULL
+    BEGIN
+      INSERT INTO EDI.Chat_Salas (nombre, tipo) VALUES (NULL, 'PRIVADO');
+      SET @id_sala = SCOPE_IDENTITY();
+      INSERT INTO EDI.Chat_Participantes (id_sala, id_usuario, es_admin)
+      VALUES (@id_sala, @my_id, 1), (@id_sala, @other_id, 0);
+      SET @created = 1;
+    END;
+
+    COMMIT TRANSACTION;
+    SELECT @id_sala AS id_sala, @created AS created;
+  `,
+
   // Crea una sala nueva
   createSala: `
     INSERT INTO EDI.Chat_Salas (nombre, tipo) VALUES (@nombre, @tipo);
@@ -7,12 +52,24 @@ exports.Q = {
 
   // Agrega un usuario a una sala
   addParticipante: `
-    INSERT INTO EDI.Chat_Participantes (id_sala, id_usuario, es_admin)
-    VALUES (@id_sala, @id_usuario, @es_admin);
+    IF NOT EXISTS (
+      SELECT 1 FROM EDI.Chat_Participantes
+      WHERE id_sala = @id_sala AND id_usuario = @id_usuario
+    )
+    BEGIN
+      INSERT INTO EDI.Chat_Participantes (id_sala, id_usuario, es_admin)
+      VALUES (@id_sala, @id_usuario, @es_admin);
+    END;
   `,
 
   // Guardar mensaje
   sendMessage: `
+    IF NOT EXISTS (
+      SELECT 1 FROM EDI.Chat_Participantes
+      WHERE id_sala = @id_sala AND id_usuario = @id_usuario
+    )
+      RETURN;
+
     INSERT INTO EDI.Chat_Mensajes (id_sala, id_usuario, mensaje, tipo_mensaje)
     VALUES (@id_sala, @id_usuario, @mensaje, @tipo_mensaje);
 
@@ -88,25 +145,9 @@ WHERE m.id_mensaje = @id_mensaje;
 
   // Marcar sala como leída: actualiza ultima_lectura del participante
   markRead: `
-    IF EXISTS (
-      SELECT 1 FROM EDI.Chat_Participantes
-      WHERE id_sala = @id_sala AND id_usuario = @id_usuario
-    )
-    BEGIN
-      -- Verificar si la columna ultima_lectura ya existe; si no, agregarla al vuelo
-      IF NOT EXISTS (
-        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = 'EDI' AND TABLE_NAME = 'Chat_Participantes'
-          AND COLUMN_NAME = 'ultima_lectura'
-      )
-      BEGIN
-        ALTER TABLE EDI.Chat_Participantes ADD ultima_lectura DATETIME NULL;
-      END
-
-      UPDATE EDI.Chat_Participantes
-      SET ultima_lectura = SYSDATETIME()
-      WHERE id_sala = @id_sala AND id_usuario = @id_usuario;
-    END
+    UPDATE EDI.Chat_Participantes
+    SET ultima_lectura = GETUTCDATE()
+    WHERE id_sala = @id_sala AND id_usuario = @id_usuario;
   `,
 
   // Total de mensajes no leídos en todos los chats del usuario
@@ -126,7 +167,8 @@ WHERE m.id_mensaje = @id_mensaje;
 
   // Obtener mensajes de una sala específica
   getMensajes: `
-    SELECT 
+    SELECT * FROM (
+      SELECT TOP (@limit)
         m.id_mensaje,
         m.id_sala,
         m.id_usuario,
@@ -134,10 +176,18 @@ WHERE m.id_mensaje = @id_mensaje;
         m.mensaje,
         m.created_at,
         CASE WHEN m.id_usuario = @id_usuario THEN 1 ELSE 0 END as es_mio
-    FROM EDI.Chat_Mensajes m
-    JOIN EDI.Usuarios u ON u.id_usuario = m.id_usuario
-    WHERE m.id_sala = @id_sala
-    ORDER BY m.created_at ASC
+      FROM EDI.Chat_Mensajes m
+      JOIN EDI.Usuarios u ON u.id_usuario = m.id_usuario
+      WHERE m.id_sala = @id_sala
+        AND (@before_id IS NULL OR m.id_mensaje < @before_id)
+        AND EXISTS (
+          SELECT 1 FROM EDI.Chat_Participantes access_cp
+          WHERE access_cp.id_sala = m.id_sala
+            AND access_cp.id_usuario = @id_usuario
+        )
+      ORDER BY m.id_mensaje DESC
+    ) recent
+    ORDER BY id_mensaje ASC
   `,
 
   // Buscar si ya existe chat privado entre dos personas

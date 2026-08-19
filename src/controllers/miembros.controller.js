@@ -2,6 +2,7 @@ const { sql, queryP, pool } = require('../dataBase/dbConnection');
 const { ok, created, bad, fail } = require('../utils/http');
 const { enviarNotificacionPush, enviarNotificacionMulticast } = require('../utils/firebase');
 const { canAddEdiChildren, limitError } = require('../utils/familyChildLimit');
+const { insertarNotificaciones } = require('../utils/notificaciones');
 
 // ── Helper ────────────────────────────────────────────────────────────────
 /** Devuelve { id_familia, nombre_familia } si el usuario ya está en otra familia activa */
@@ -100,7 +101,9 @@ async function addBulk(req, res) {
   const transaction = new sql.Transaction(pool);
   try {
     const { id_familia, id_usuarios } = req.body;
-    const uniqueUserIds = [...new Set(id_usuarios.map(Number))];
+    const uniqueUserIds = [...new Set(id_usuarios.map(Number))]
+      .filter(id => Number.isInteger(id) && id > 0);
+    if (!uniqueUserIds.length) return bad(res, 'No hay usuarios válidos para asignar');
     const capacity = await canAddEdiChildren(id_familia, uniqueUserIds.length);
     if (!capacity.allowed) return bad(res, limitError(capacity));
     const familiaRes = await queryP('SELECT nombre_familia FROM EDI.Familias_EDI WHERE id_familia = @id', {
@@ -109,11 +112,15 @@ async function addBulk(req, res) {
     const nombreFamilia = familiaRes[0]?.nombre_familia || 'Familia';
 
     // Validar conflictos ANTES de abrir la transacción
-    const conflicts = [];
-    for (const id_usuario of uniqueUserIds) {
-      const c = await _usuarioEnOtraFamilia(id_usuario, id_familia);
-      if (c) conflicts.push({ id_usuario, nombre_familia: c.nombre_familia });
-    }
+    const conflicts = await queryP(`
+      SELECT mf.id_usuario, MIN(f.nombre_familia) AS nombre_familia
+      FROM EDI.Miembros_Familia mf
+      JOIN EDI.Familias_EDI f ON f.id_familia = mf.id_familia
+      WHERE mf.id_usuario IN (${uniqueUserIds.join(',')})
+        AND mf.id_familia <> @id_familia
+        AND mf.activo = 1 AND f.activo = 1
+      GROUP BY mf.id_usuario
+    `, { id_familia: { type: sql.Int, value: Number(id_familia) } });
     if (conflicts.length > 0) {
       return res.status(409).json({
         ok: false,
@@ -123,17 +130,17 @@ async function addBulk(req, res) {
     }
 
     await transaction.begin();
-    for (const id_usuario of uniqueUserIds) {
-      const request = new sql.Request(transaction);
-      request.input('id_familia', sql.Int, id_familia);
-      request.input('id_usuario', sql.Int, id_usuario);
-      request.input('tipo_miembro', sql.NVarChar, 'ALUMNO_ASIGNADO');
-      
-      await request.query(`
-        INSERT INTO EDI.Miembros_Familia (id_familia, id_usuario, tipo_miembro, activo, created_at) 
-        VALUES (@id_familia, @id_usuario, @tipo_miembro, 1, SYSDATETIME())
-      `);
-    }
+    const request = new sql.Request(transaction);
+    request.input('id_familia', sql.Int, id_familia);
+    const values = uniqueUserIds.map((id_usuario, index) => {
+      request.input(`id_usuario_${index}`, sql.Int, id_usuario);
+      return `(@id_familia, @id_usuario_${index}, 'ALUMNO_ASIGNADO', 1, SYSUTCDATETIME())`;
+    });
+    await request.query(`
+      INSERT INTO EDI.Miembros_Familia
+        (id_familia, id_usuario, tipo_miembro, activo, created_at)
+      VALUES ${values.join(',')};
+    `);
     await transaction.commit();
 
     // Tiempo real: Actualizar lista de miembros en los clientes conectados
@@ -218,19 +225,20 @@ async function _enviarNotificacionesBulk(id_familia, id_usuarios, nombreFamilia)
         const ids = id_usuarios.map(id => Number(id)).filter(id => !isNaN(id));
         if (ids.length === 0) return;
         
-        const usersData = await queryP(`SELECT id_usuario, fcm_token FROM EDI.Usuarios WHERE id_usuario IN (${ids.join(',')})`);
-        const tokensDestino = [];
-
-        for (const u of usersData) {
-            queryP(`INSERT INTO EDI.Notificaciones (id_usuario_destino, titulo, cuerpo, tipo, id_referencia, leido, fecha_creacion)
-                    VALUES (@uid, @tit, @body, 'ASIGNACION', @ref, 0, GETUTCDATE())`, {
-                uid: { type: sql.Int, value: u.id_usuario },
-                tit: { type: sql.NVarChar, value: 'Nueva Asignación 🎒' },
-                body: { type: sql.NVarChar, value: `Has sido asignado a la familia "${nombreFamilia}".` },
-                ref: { type: sql.Int, value: id_familia }
-            }).catch(e => console.error("Error BD Notif:", e.message));
-            if (u.fcm_token) tokensDestino.push(u.fcm_token);
-        }
+        const usersData = await queryP(`
+          SELECT s.fcm_token
+          FROM EDI.Usuario_Sesiones s
+          WHERE s.id_usuario IN (${ids.join(',')}) AND s.activo = 1
+            AND s.fcm_token IS NOT NULL AND LEN(s.fcm_token) > 10
+        `);
+        const tokensDestino = usersData.map(u => u.fcm_token);
+        await insertarNotificaciones(
+          ids,
+          'Nueva Asignación 🎒',
+          `Has sido asignado a la familia "${nombreFamilia}".`,
+          'ASIGNACION',
+          id_familia
+        );
         if (tokensDestino.length > 0) {
             enviarNotificacionMulticast(tokensDestino, 'Nueva Asignación 🎒', `Has sido asignado a la familia "${nombreFamilia}".`, 
             { tipo: 'ASIGNACION', id_familia: id_familia.toString() });
