@@ -169,6 +169,16 @@ exports.Q = {
       (@id_usuario, @session_token, @fcm_token, @device_info, @device_id, @platform, @ip_address, 1);
   `,
 
+  // Un dispositivo conserva una sola sesión activa. Esto evita crear una fila
+  // nueva por cada login repetido desde el mismo teléfono.
+  deactivateSessionsForDevice: `
+    UPDATE EDI.Usuario_Sesiones
+    SET activo = 0
+    WHERE id_usuario = @id_usuario
+      AND device_id = @device_id
+      AND activo = 1;
+  `,
+
   // Cuenta las sesiones activas de un usuario.
   countActiveSessions: `
     SELECT COUNT(*) AS total
@@ -260,6 +270,12 @@ exports.Q = {
     UPDATE EDI.Usuario_Sesiones
     SET last_active_at = GETDATE()
     WHERE id_sesion = @id_sesion;
+  `,
+
+  purgeInactiveSessions: `
+    DELETE FROM EDI.Usuario_Sesiones
+    WHERE activo = 0
+      AND last_active_at < DATEADD(DAY, -@days, GETDATE());
   `,
 
   // Actualiza el fcm_token de una sesión específica.

@@ -9,6 +9,7 @@ const app = require('./app');
 const http = require('http');
 const { Server } = require('socket.io');
 const { initCronJobs } = require('./services/birthday.service');
+const { purgeInactiveSessions } = require('./services/session.service');
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -45,7 +46,17 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
 server.listen(PORT, () => {
   console.log(`Servidor con Sockets corriendo en el puerto ${PORT}`);
   initCronJobs();
+  purgeInactiveSessions().catch(err =>
+    console.error('Error en limpieza inicial de sesiones:', err.message)
+  );
+  setInterval(() => {
+    purgeInactiveSessions().catch(err =>
+      console.error('Error limpiando sesiones inactivas:', err.message)
+    );
+  }, 24 * 60 * 60 * 1000).unref();
 });

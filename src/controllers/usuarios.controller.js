@@ -319,18 +319,17 @@ exports.updateEmail = async (req, res) => {
 
 exports.updateToken = async (req, res) => {
   try {
-    const { id_usuario, fcm_token, token, session_token } = req.body;
+    const { fcm_token, token, session_token } = req.body;
+    const id_usuario = req.user && req.user.id_usuario;
 
     // acepta varias llaves para no romper clientes viejos
     const incomingToken = fcm_token || token || session_token;
 
     if (!id_usuario || !incomingToken) {
-      return bad(res, 'Faltan datos (id_usuario o fcm_token)');
+      return bad(res, 'Falta el token de notificaciones o no estás autenticado');
     }
 
-    // Si la request viene autenticada (req.session existe), actualiza el
-    // fcm_token de la SESIÓN actual (multi-dispositivo). Esto es lo
-    // recomendado y garantiza que cada dispositivo guarde su propio token.
+    // Cada dispositivo guarda el token en su propia sesión autenticada.
     if (req.session && req.session.id_sesion) {
       await queryP(UQ.updateSessionFcmToken, {
         id_sesion: { type: sql.Int,      value: req.session.id_sesion },

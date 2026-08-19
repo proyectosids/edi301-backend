@@ -20,6 +20,7 @@ router.use('/alertas', require('./alertas.routes'));
 router.use('/hijos-hogar', require('./hijos-hogar.routes'));
 router.use('/renovaciones', require('./renovaciones.routes'));
 router.use('/configuracion', require('./configuracion.routes'));
+router.use('/encuestas', require('./encuestas.routes'));
 
 
 module.exports = router;
