@@ -3,7 +3,6 @@ const { comparePassword, hashPassword } = require('../utils/hash');
 const { newSessionToken } = require('../utils/token');
 const { ok, bad, fail } = require('../utils/http');
 const UQ = require('../queries/usuarios.queries').Q;
-const { loginSchema } = require('../models/auth.model');
 
 // Límite de sesiones simultáneas por usuario.
 // Cuando el usuario hace login en un (N+1)-ésimo dispositivo, se cierra
@@ -14,10 +13,11 @@ exports.login = async (req, res) => {
   try {
     const { login, password, device_info, device_id, platform } = req.body || {};
 
-    const { error, value } = loginSchema.validate({ login, password });
-    if (error) return bad(res, 'Datos de inicio de sesión inválidos');
+    if (!login || !password) {
+        return bad(res, 'Faltan datos: login o password');
+    }
 
-    const rows = await queryP(UQ.byLogin, { Login: { type: sql.NVarChar, value: value.login.trim() } });
+    const rows = await queryP(UQ.byLogin, { Login: { type: sql.NVarChar, value: login } });
     if (!rows.length) return bad(res, 'Usuario no encontrado');
 
     const user = rows[0];
@@ -30,29 +30,18 @@ exports.login = async (req, res) => {
     const okPass = await comparePassword(password, user.contrasena);
     if (!okPass) return bad(res, 'Contraseña incorrecta');
 
-    // Generar una sesión. Cuando el cliente identifica su dispositivo,
-    // sustituimos únicamente su sesión anterior en vez de acumular filas.
+    // Generar token y crear una sesión NUEVA en EDI.Usuario_Sesiones
+    // (multi-dispositivo: no se sobrescribe la sesión anterior).
     const token = newSessionToken();
     const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')
                   .toString().split(',')[0].trim().slice(0, 45);
-
-    const normalizedDeviceId = typeof device_id === 'string'
-      ? device_id.trim().slice(0, 255)
-      : '';
-
-    if (normalizedDeviceId) {
-      await queryP(UQ.deactivateSessionsForDevice, {
-        id_usuario: { type: sql.Int, value: user.id_usuario },
-        device_id:  { type: sql.NVarChar, value: normalizedDeviceId },
-      });
-    }
 
     await queryP(UQ.insertSession, {
       id_usuario:    { type: sql.Int,      value: user.id_usuario },
       session_token: { type: sql.NVarChar, value: token },
       fcm_token:     { type: sql.NVarChar, value: null },
       device_info:   { type: sql.NVarChar, value: (device_info || null) },
-      device_id:     { type: sql.NVarChar, value: normalizedDeviceId || null },
+      device_id:     { type: sql.NVarChar, value: (device_id   || null) },
       platform:      { type: sql.NVarChar, value: (platform    || null) },
       ip_address:    { type: sql.NVarChar, value: ip || null },
     });

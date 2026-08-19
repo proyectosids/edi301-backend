@@ -1,30 +1,6 @@
 const { sql, queryP } = require('../dataBase/dbConnection');
 const UQ = require('../queries/usuarios.queries').Q;
 
-// No hace falta escribir en SQL cada vez que la app consulta una pantalla.
-// Conservamos actividad reciente con una escritura como máximo cada 5 minutos
-// por sesión y evitamos saturar el pool.
-const lastTouched = new Map();
-const TOUCH_INTERVAL_MS = 5 * 60 * 1000;
-const MAX_TRACKED_SESSIONS = 10000;
-
-function touchSessionOccasionally(idSesion) {
-  const now = Date.now();
-  const previous = lastTouched.get(idSesion) || 0;
-  if (now - previous < TOUCH_INTERVAL_MS) return;
-
-  lastTouched.set(idSesion, now);
-  if (lastTouched.size > MAX_TRACKED_SESSIONS) {
-    for (const [id, touchedAt] of lastTouched) {
-      if (now - touchedAt > TOUCH_INTERVAL_MS) lastTouched.delete(id);
-    }
-  }
-
-  queryP(UQ.touchSession, {
-    id_sesion: { type: sql.Int, value: idSesion },
-  }).catch(err => console.warn('touchSession failed:', err.message));
-}
-
 module.exports = async function authGuard(req, res, next) {
   try {
     const hdr = req.headers.authorization || '';
@@ -78,7 +54,9 @@ module.exports = async function authGuard(req, res, next) {
 
     // Touch best-effort: refresca last_active_at para que la sesión no
     // sea evictada como "antigua" mientras se está usando.
-    touchSessionOccasionally(row.id_sesion);
+    queryP(UQ.touchSession, {
+      id_sesion: { type: sql.Int, value: row.id_sesion },
+    }).catch(err => console.warn('touchSession failed:', err.message));
 
     next();
 

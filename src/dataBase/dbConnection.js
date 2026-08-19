@@ -13,15 +13,7 @@ const dbConfig = {
   server: process.env.DBSERVER || '127.0.0.1', 
   database: process.env.DATABASE,          
   port: Number(process.env.DBPORT || 1433),
-  // Un pool pequeño convierte cada ráfaga de peticiones autenticadas en una
-  // fila de espera. Se puede ajustar por entorno sin volver a desplegar.
-  pool: {
-    max: Number(process.env.DB_POOL_MAX || 20),
-    min: Number(process.env.DB_POOL_MIN || 0),
-    idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_MS || 60000),
-  },
-  connectionTimeout: Number(process.env.DB_CONNECTION_TIMEOUT_MS || 15000),
-  requestTimeout: Number(process.env.DB_REQUEST_TIMEOUT_MS || 30000),
+  pool: { max: 10, min: 0, idleTimeoutMillis: 60000 },
   options: {
     encrypt: false,                        
     trustServerCertificate: true,

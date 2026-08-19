@@ -10,7 +10,7 @@ const { saveOptimizedImage } = require('../utils/imageStorage')
 //router.get('/', C.list);
 router.get('/', C.searchUsers);
 router.get('/familias/by-doc/search', F.searchByDocument);
-router.put('/update-token', auth, C.updateToken);
+router.put('/update-token', C.updateToken);
 // Rutas específicas ANTES de /:id para evitar conflictos
 router.get('/cumpleanos',         C.getBirthdays);
 router.get('/cumpleanos/imagen',   C.getImagenCumpleanos);
