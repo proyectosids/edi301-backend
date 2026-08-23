@@ -12,6 +12,12 @@ const {
   invalidateAvailableFamilies,
   resetAvailableFamiliesCache,
 } = require('../src/utils/availableFamiliesCache');
+const {
+  getFamilyDetails,
+  invalidateFamilyDetails,
+  resetFamilyDetailsCache,
+} = require('../src/utils/familyDetailsCache');
+const { rollbackSafely } = require('../src/utils/transaction');
 
 test('pagination applies defaults and hard maximums', () => {
   assert.deepEqual(getPagination({}), { page: 1, limit: 100, offset: 0 });
@@ -89,4 +95,42 @@ test('available families cache serves stale data when SQL is temporarily unavail
   });
   assert.equal(result.cacheStatus, 'STALE');
   assert.deepEqual(result.data, [{ id_familia: 7 }]);
+});
+
+test('family details cache coalesces duplicate requests and serves stale data', async () => {
+  resetFamilyDetailsCache();
+  let loads = 0;
+  const loader = async () => {
+    loads++;
+    await new Promise(resolve => setImmediate(resolve));
+    return { id_familia: 34, miembros: [] };
+  };
+  const [first, second] = await Promise.all([
+    getFamilyDetails(34, loader),
+    getFamilyDetails(34, loader),
+  ]);
+  assert.equal(loads, 1);
+  assert.deepEqual(first.data, second.data);
+
+  invalidateFamilyDetails();
+  const stale = await getFamilyDetails(34, async () => {
+    throw new Error('SQL timeout');
+  });
+  assert.equal(stale.cacheStatus, 'STALE');
+});
+
+test('rollback helper attempts rollback without relying on a rolledBack property', async () => {
+  let attempts = 0;
+  const rolledBack = await rollbackSafely({
+    rollback: async () => { attempts++; },
+  }, 'test');
+  assert.equal(rolledBack, true);
+  assert.equal(attempts, 1);
+});
+
+test('controllers do not use the nonexistent transaction.rolledBack property', () => {
+  for (const file of ['familias.controller.js', 'miembros.controller.js', 'encuestas.controller.js']) {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'controllers', file), 'utf8');
+    assert.doesNotMatch(source, /\.rolledBack\b/);
+  }
 });

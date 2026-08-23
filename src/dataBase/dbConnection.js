@@ -5,8 +5,10 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 const sql = require('mssql');
 
-
-
+function envBoolean(value, fallback) {
+  if (value == null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+}
 const dbConfig = {
   user: process.env.DBUSER,                
   password: process.env.DBPASSWORD,        
@@ -24,7 +26,10 @@ const dbConfig = {
   options: {
     encrypt: false,                        
     trustServerCertificate: true,
-    enableArithAbort: true               
+    enableArithAbort: true,
+    // SET XACT_ABORT ON como segunda barrera de seguridad. Los controladores
+    // siguen ejecutando rollback explícito mediante runInTransaction.
+    abortTransactionOnError: envBoolean(process.env.DB_ABORT_TRANSACTION_ON_ERROR, true)
   }
 };
 

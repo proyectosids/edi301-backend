@@ -10,8 +10,10 @@ const {
 const auth = require('../middleware/authGuard');
 const allow = require('../middleware/roleGuard');
 const { invalidateAvailableFamiliesOnSuccess } = require('../utils/availableFamiliesCache');
+const { invalidateFamilyDetailsOnSuccess } = require('../utils/familyDetailsCache');
 
 router.use(invalidateAvailableFamiliesOnSuccess);
+router.use(invalidateFamilyDetailsOnSuccess);
 
 // Crear / actualizar / borrar (solo Admin)
 router.post('/',  auth, allow('Admin'), validate(createFamilia), C.create);

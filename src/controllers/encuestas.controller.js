@@ -2,7 +2,8 @@ const crypto = require('crypto');
 const { sql, pool, queryP } = require('../dataBase/dbConnection');
 const { ok, created, bad, notFound, fail } = require('../utils/http');
 const { enviarNotificacionMulticast } = require('../utils/firebase');
-const { insertarNotificacion } = require('../utils/notificaciones');
+const { insertarNotificacionesUsuariosActivos } = require('../utils/notificaciones');
+const { runInTransaction } = require('../utils/transaction');
 
 const isAdmin = (req) => req.user?.nombre_rol === 'Admin';
 const anonymousHash = (userId, surveyId) => crypto
@@ -66,9 +67,134 @@ async function writeSurvey(transaction, id, body) {
   for (let i = 0; i < body.preguntas.length; i++) { const q = body.preguntas[i]; const qr = new sql.Request(transaction); qr.input('survey', sql.Int, surveyId); qr.input('texto', sql.NVarChar, q.texto); qr.input('tipo', sql.NVarChar, q.tipo); qr.input('orden', sql.Int, i + 1); qr.input('requerida', sql.Bit, q.requerida); const ins = await qr.query('INSERT INTO EDI.Encuesta_Preguntas (id_encuesta,texto,tipo,orden,requerida) OUTPUT INSERTED.id_pregunta VALUES (@survey,@texto,@tipo,@orden,@requerida)'); for (let j=0; j<(q.opciones||[]).length; j++) { const or = new sql.Request(transaction); or.input('question', sql.Int, ins.recordset[0].id_pregunta); or.input('texto', sql.NVarChar, q.opciones[j]); or.input('orden', sql.Int, j+1); await or.query('INSERT INTO EDI.Encuesta_Opciones (id_pregunta,texto,orden) VALUES (@question,@texto,@orden)'); } }
   return surveyId;
 }
-exports.create = async (req, res) => { const t = new sql.Transaction(pool); try { await t.begin(); const id = await writeSurvey(t, null, req.body); await t.commit(); const survey = mapSurvey(await surveyRows(id)); created(res, survey); if (survey.estado === 'PUBLICADA') { const users = await queryP('SELECT id_usuario, fcm_token FROM EDI.Usuarios WHERE activo=1'); for (const user of users) insertarNotificacion(user.id_usuario, '📋 Nueva encuesta', survey.titulo, 'ENCUESTA', id); enviarNotificacionMulticast(users.map(x => x.fcm_token), '📋 Nueva encuesta', survey.titulo, { tipo: 'ENCUESTA', id_encuesta: id }); } } catch (e) { if (t.rolledBack === false) await t.rollback(); fail(res,e); } };
-exports.update = async (req, res) => { const t = new sql.Transaction(pool); try { const id=Number(req.params.id); if (!(await surveyRows(id)).length) return notFound(res); await t.begin(); await writeSurvey(t,id,req.body); await t.commit(); ok(res,mapSurvey(await surveyRows(id))); } catch(e) { if(t.rolledBack===false) await t.rollback(); fail(res,e); } };
+exports.create = async (req, res) => {
+  try {
+    const id = await runInTransaction(
+      pool,
+      transaction => writeSurvey(transaction, null, req.body),
+      { label: 'creación de encuesta' }
+    );
+    const survey = mapSurvey(await surveyRows(id));
+    created(res, survey);
+
+    if (survey.estado === 'PUBLICADA') {
+      const users = await queryP('SELECT fcm_token FROM EDI.Usuarios WHERE activo=1');
+      await insertarNotificacionesUsuariosActivos(
+        '📋 Nueva encuesta',
+        survey.titulo,
+        'ENCUESTA',
+        id
+      );
+      enviarNotificacionMulticast(
+        users.map(user => user.fcm_token).filter(Boolean),
+        '📋 Nueva encuesta',
+        survey.titulo,
+        { tipo: 'ENCUESTA', id_encuesta: id }
+      );
+    }
+  } catch (e) {
+    fail(res, e);
+  }
+};
+
+exports.update = async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!(await surveyRows(id)).length) return notFound(res);
+    await runInTransaction(
+      pool,
+      transaction => writeSurvey(transaction, id, req.body),
+      { label: 'actualización de encuesta' }
+    );
+    ok(res, mapSurvey(await surveyRows(id)));
+  } catch (e) {
+    fail(res, e);
+  }
+};
 exports.close = async (req,res) => { try { const rows=await queryP("UPDATE EDI.Encuestas SET estado='CERRADA', updated_at=GETDATE() OUTPUT INSERTED.id_encuesta WHERE id_encuesta=@id AND activo=1", {id:{type:sql.Int,value:Number(req.params.id)}}); if(!rows.length)return notFound(res); ok(res,{id_encuesta:rows[0].id_encuesta,estado:'CERRADA'}); }catch(e){fail(res,e);} };
 exports.remove = async (req,res) => { try { await queryP('UPDATE EDI.Encuestas SET activo=0, updated_at=GETDATE() WHERE id_encuesta=@id',{id:{type:sql.Int,value:Number(req.params.id)}}); ok(res,{message:'Encuesta eliminada'}); }catch(e){fail(res,e);} };
-exports.submit = async (req,res) => { const t=new sql.Transaction(pool); try { const id=Number(req.params.id); const survey=mapSurvey(await surveyRows(id)); if(!survey)return notFound(res); if(!isOpen(survey))return bad(res,'La encuesta no está disponible.'); const hash=anonymousHash(req.user.id_usuario,id); await t.begin(); const rr=new sql.Request(t); rr.input('survey',sql.Int,id); rr.input('hash',sql.Char(64),hash); const inserted=await rr.query('INSERT INTO EDI.Encuesta_Respuestas (id_encuesta,respondent_hash) OUTPUT INSERTED.id_respuesta VALUES (@survey,@hash)'); const responseId=inserted.recordset[0].id_respuesta; const answerByQuestion=new Map(req.body.respuestas.map(x=>[x.id_pregunta,x])); for(const q of survey.preguntas){const a=answerByQuestion.get(q.id_pregunta); if(q.requerida&&!a)throw new Error(`La pregunta "${q.texto}" es obligatoria.`); if(!a)continue; if(q.tipo==='LIBRE'){if(!a.texto_libre?.trim())return bad(res,'Una respuesta libre requerida no puede estar vacía.'); const d=new sql.Request(t);d.input('r',sql.Int,responseId);d.input('q',sql.Int,q.id_pregunta);d.input('txt',sql.NVarChar,a.texto_libre.trim());await d.query('INSERT INTO EDI.Encuesta_Respuesta_Detalle (id_respuesta,id_pregunta,texto_libre) VALUES (@r,@q,@txt)');}else{const ids=[...new Set(a.opciones||[])];if((q.tipo==='UNICA'&&ids.length!==1)||(q.tipo==='MULTIPLE'&&q.requerida&&ids.length===0))return bad(res,'Las opciones seleccionadas no son válidas.');const allowed=new Set(q.opciones.map(x=>x.id_opcion));if(ids.some(x=>!allowed.has(x)))return bad(res,'Opción inválida.');for(const option of ids){const d=new sql.Request(t);d.input('r',sql.Int,responseId);d.input('q',sql.Int,q.id_pregunta);d.input('o',sql.Int,option);await d.query('INSERT INTO EDI.Encuesta_Respuesta_Detalle (id_respuesta,id_pregunta,id_opcion) VALUES (@r,@q,@o)');}}} await t.commit();created(res,{message:'Respuesta registrada anónimamente'});}catch(e){if(t.rolledBack===false)await t.rollback();if(e.number===2627||e.number===2601)return bad(res,'Ya respondiste esta encuesta.');if(!res.headersSent)bad(res,e.message||'No se pudo guardar la respuesta.');} };
+exports.submit = async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const survey = mapSurvey(await surveyRows(id));
+    if (!survey) return notFound(res);
+    if (!isOpen(survey)) return bad(res, 'La encuesta no está disponible.');
+
+    const answerByQuestion = new Map(
+      req.body.respuestas.map(answer => [answer.id_pregunta, answer])
+    );
+    for (const question of survey.preguntas) {
+      const answer = answerByQuestion.get(question.id_pregunta);
+      if (question.requerida && !answer) {
+        return bad(res, `La pregunta "${question.texto}" es obligatoria.`);
+      }
+      if (!answer) continue;
+      if (question.tipo === 'LIBRE') {
+        if (!answer.texto_libre?.trim()) {
+          return bad(res, 'Una respuesta libre requerida no puede estar vacía.');
+        }
+        continue;
+      }
+
+      const optionIds = [...new Set(answer.opciones || [])];
+      if ((question.tipo === 'UNICA' && optionIds.length !== 1)
+        || (question.tipo === 'MULTIPLE' && question.requerida && optionIds.length === 0)) {
+        return bad(res, 'Las opciones seleccionadas no son válidas.');
+      }
+      const allowed = new Set(question.opciones.map(option => option.id_opcion));
+      if (optionIds.some(optionId => !allowed.has(optionId))) {
+        return bad(res, 'Opción inválida.');
+      }
+    }
+
+    const hash = anonymousHash(req.user.id_usuario, id);
+    await runInTransaction(pool, async (transaction) => {
+      const responseRequest = new sql.Request(transaction);
+      responseRequest.input('survey', sql.Int, id);
+      responseRequest.input('hash', sql.Char(64), hash);
+      const inserted = await responseRequest.query(`
+        INSERT INTO EDI.Encuesta_Respuestas (id_encuesta, respondent_hash)
+        OUTPUT INSERTED.id_respuesta
+        VALUES (@survey, @hash)
+      `);
+      const responseId = inserted.recordset[0].id_respuesta;
+
+      for (const question of survey.preguntas) {
+        const answer = answerByQuestion.get(question.id_pregunta);
+        if (!answer) continue;
+        if (question.tipo === 'LIBRE') {
+          const detailRequest = new sql.Request(transaction);
+          detailRequest.input('response', sql.Int, responseId);
+          detailRequest.input('question', sql.Int, question.id_pregunta);
+          detailRequest.input('text', sql.NVarChar, answer.texto_libre.trim());
+          await detailRequest.query(`
+            INSERT INTO EDI.Encuesta_Respuesta_Detalle
+              (id_respuesta, id_pregunta, texto_libre)
+            VALUES (@response, @question, @text)
+          `);
+          continue;
+        }
+
+        for (const optionId of [...new Set(answer.opciones || [])]) {
+          const detailRequest = new sql.Request(transaction);
+          detailRequest.input('response', sql.Int, responseId);
+          detailRequest.input('question', sql.Int, question.id_pregunta);
+          detailRequest.input('option', sql.Int, optionId);
+          await detailRequest.query(`
+            INSERT INTO EDI.Encuesta_Respuesta_Detalle
+              (id_respuesta, id_pregunta, id_opcion)
+            VALUES (@response, @question, @option)
+          `);
+        }
+      }
+    }, { label: 'registro de respuesta de encuesta' });
+
+    created(res, { message: 'Respuesta registrada anónimamente' });
+  } catch (e) {
+    if (e.number === 2627 || e.number === 2601) {
+      return bad(res, 'Ya respondiste esta encuesta.');
+    }
+    if (!res.headersSent) bad(res, e.message || 'No se pudo guardar la respuesta.');
+  }
+};
 exports.results = async (req,res) => { try { const id=Number(req.params.id); const survey=mapSurvey(await surveyRows(id)); if(!survey)return notFound(res); const total=(await queryP('SELECT COUNT(*) total FROM EDI.Encuesta_Respuestas WHERE id_encuesta=@id',{id:{type:sql.Int,value:id}}))[0].total; const counts=await queryP('SELECT id_pregunta,id_opcion,COUNT(*) total FROM EDI.Encuesta_Respuesta_Detalle d JOIN EDI.Encuesta_Respuestas r ON r.id_respuesta=d.id_respuesta WHERE r.id_encuesta=@id AND d.id_opcion IS NOT NULL GROUP BY id_pregunta,id_opcion',{id:{type:sql.Int,value:id}}); const libres=await queryP('SELECT d.id_pregunta,d.texto_libre FROM EDI.Encuesta_Respuesta_Detalle d JOIN EDI.Encuesta_Respuestas r ON r.id_respuesta=d.id_respuesta WHERE r.id_encuesta=@id AND d.texto_libre IS NOT NULL ORDER BY d.id_detalle',{id:{type:sql.Int,value:id}}); ok(res,{...survey,total_respuestas:Number(total),conteos:counts,respuestas_libres:libres}); }catch(e){fail(res,e);} };

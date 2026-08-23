@@ -51,3 +51,23 @@ WHERE s.session_id IN (
   WHERE blocking_session_id > 0
     AND database_id = DB_ID()
 );
+
+/* Transacciones abiertas, incluso si en ese instante no bloquean otra solicitud. */
+SELECT
+  s.session_id,
+  s.status AS session_status,
+  s.open_transaction_count,
+  at.transaction_begin_time,
+  DATEDIFF(SECOND, at.transaction_begin_time, SYSDATETIME()) AS transaction_age_seconds,
+  at.transaction_state,
+  s.host_name,
+  s.program_name,
+  s.login_name,
+  last_sql.text AS last_statement
+FROM sys.dm_tran_session_transactions st
+JOIN sys.dm_tran_active_transactions at ON at.transaction_id = st.transaction_id
+JOIN sys.dm_exec_sessions s ON s.session_id = st.session_id
+LEFT JOIN sys.dm_exec_connections c ON c.session_id = s.session_id
+OUTER APPLY sys.dm_exec_sql_text(c.most_recent_sql_handle) last_sql
+WHERE s.session_id <> @@SPID
+ORDER BY at.transaction_begin_time;

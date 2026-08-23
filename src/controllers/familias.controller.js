@@ -8,6 +8,8 @@ const { getActiveFcmTokensForUsers } = require('../utils/sessions');
 const { insertarNotificaciones } = require('../utils/notificaciones');
 const { getAvailableFamilies } = require('../utils/availableFamiliesCache');
 const { getEdiChildLimit, limitError } = require('../utils/familyChildLimit');
+const { runInTransaction } = require('../utils/transaction');
+const { getFamilyDetails } = require('../utils/familyDetailsCache');
 const withBase = (tpl) => tpl.replace('{{BASE}}', Q.base);
 const availableQueryTimeoutMs = Math.max(
   Number(process.env.AVAILABLE_FAMILIES_QUERY_TIMEOUT_MS) || 5000,
@@ -62,31 +64,36 @@ exports.list = async (_req, res) => {
 exports.get = async (req, res) => {
   try {
     const id_familia = Number(req.params.id);
-    const rows = await queryP(withBase(Q.byId), {
-      id_familia: { type: sql.Int, value: id_familia },
+    const result = await getFamilyDetails(id_familia, async () => {
+      const rows = await queryP(withBase(Q.byId), {
+        id_familia: { type: sql.Int, value: id_familia },
+      });
+      if (!rows.length) return null;
+
+      const [miembros, hijosHogar] = await Promise.all([
+        queryP(MiembrosQ.listByFamilia, {
+          id_familia: { type: sql.Int, value: id_familia },
+        }),
+        queryP(
+          `SELECT id_hijo, nombre, apellido,
+                  CONVERT(varchar(10), fecha_nacimiento, 23) AS fecha_nacimiento
+           FROM EDI.Hijos_Hogar
+           WHERE id_familia = @id AND activo = 1
+           ORDER BY nombre, apellido`,
+          { id: { type: sql.Int, value: id_familia } }
+        ).catch(() => []),
+      ]);
+
+      return { ...rows[0], miembros, hijos_hogar: hijosHogar };
     });
 
-    if (!rows.length) return notFound(res);
-
-    const familia = rows[0];
-
-    const [miembros, hijosHogar] = await Promise.all([
-      queryP(MiembrosQ.listByFamilia, {
-        id_familia: { type: sql.Int, value: id_familia },
-      }),
-      queryP(
-        `SELECT id_hijo, nombre, apellido,
-                CONVERT(varchar(10), fecha_nacimiento, 23) AS fecha_nacimiento
-         FROM EDI.Hijos_Hogar
-         WHERE id_familia = @id AND activo = 1
-         ORDER BY nombre, apellido`,
-        { id: { type: sql.Int, value: id_familia } }
-      ).catch(() => []),   // si la tabla aún no existe no rompe
-    ]);
-
-    familia.miembros = miembros;
-    familia.hijos_hogar = hijosHogar;
-    ok(res, familia);
+    if (!result.data) return notFound(res);
+    res.set('Cache-Control', 'private, max-age=15, stale-if-error=300');
+    res.set('ETag', result.etag);
+    res.set('X-EDI-Cache', result.cacheStatus);
+    if (result.cacheStatus === 'STALE') res.set('Warning', '110 - "Response is stale"');
+    if (req.get('If-None-Match') === result.etag) return res.status(304).end();
+    ok(res, result.data);
   } catch (e) { fail(res, e); }
 };
 
@@ -125,7 +132,6 @@ exports.searchByDocument = async (req, res) => {
 };
 
 exports.create = async (req, res) => {
-  const transaction = new sql.Transaction(pool);
   try {
     const { nombre_familia, papa_id, mama_id, residencia, direccion, hijos = [], tios = [] } = req.body;
     
@@ -177,51 +183,43 @@ exports.create = async (req, res) => {
       }
     }
 
-    await transaction.begin();
-    const request = new sql.Request(transaction);
+    const id_familia = await runInTransaction(pool, async (transaction) => {
+      const request = new sql.Request(transaction);
+      request.input('nombre_familia', sql.NVarChar, nombre_familia);
+      request.input('residencia', sql.NVarChar, residencia);
+      request.input('direccion', sql.NVarChar, direccion ?? null);
+      request.input('papa_id', sql.Int, papa_id ?? null);
+      request.input('mama_id', sql.Int, mama_id ?? null);
 
-    // Insertar Familia
-    request.input('nombre_familia', sql.NVarChar, nombre_familia);
-    request.input('residencia', sql.NVarChar, residencia);
-    request.input('direccion', sql.NVarChar, direccion ?? null);
-    request.input('papa_id', sql.Int, papa_id ?? null);
-    request.input('mama_id', sql.Int, mama_id ?? null);
-    
-    const familiaResult = await request.query(`
-      INSERT INTO EDI.Familias_EDI (nombre_familia, residencia, direccion, papa_id, mama_id)
-      OUTPUT INSERTED.id_familia
-      VALUES (@nombre_familia, @residencia, @direccion, @papa_id, @mama_id);
-    `);
-
-    const id_familia = familiaResult.recordset[0].id_familia;
-
-    // Insertar Miembros
-    const miembrosAIngresar = [];
-    if (papa_id) miembrosAIngresar.push({ id: papa_id, tipo: 'PADRE' });
-    if (mama_id) miembrosAIngresar.push({ id: mama_id, tipo: 'MADRE' });
-    if (Array.isArray(hijos)) {
-        hijos.forEach(hID => miembrosAIngresar.push({ id: hID, tipo: 'HIJO' }));
-    }
-    if (Array.isArray(tios)) {
-        tios.forEach(tioId => miembrosAIngresar.push({ id: tioId, tipo: 'TIO_EDI' }));
-    }
-
-    if (miembrosAIngresar.length > 0) {
-      const mReq = new sql.Request(transaction);
-      mReq.input('miembros_id_familia', sql.Int, id_familia);
-      const values = miembrosAIngresar.map((miembro, index) => {
-        mReq.input(`miembro_id_${index}`, sql.Int, miembro.id);
-        mReq.input(`miembro_tipo_${index}`, sql.NVarChar, miembro.tipo);
-        return `(@miembros_id_familia, @miembro_id_${index}, @miembro_tipo_${index}, 1, SYSUTCDATETIME())`;
-      });
-      await mReq.query(`
-        INSERT INTO EDI.Miembros_Familia
-          (id_familia, id_usuario, tipo_miembro, activo, created_at)
-        VALUES ${values.join(',')};
+      const familiaResult = await request.query(`
+        INSERT INTO EDI.Familias_EDI (nombre_familia, residencia, direccion, papa_id, mama_id)
+        OUTPUT INSERTED.id_familia
+        VALUES (@nombre_familia, @residencia, @direccion, @papa_id, @mama_id);
       `);
-    }
+      const newFamilyId = familiaResult.recordset[0].id_familia;
 
-    await transaction.commit(); 
+      const miembrosAIngresar = [];
+      if (papa_id) miembrosAIngresar.push({ id: papa_id, tipo: 'PADRE' });
+      if (mama_id) miembrosAIngresar.push({ id: mama_id, tipo: 'MADRE' });
+      if (Array.isArray(hijos)) hijos.forEach(hID => miembrosAIngresar.push({ id: hID, tipo: 'HIJO' }));
+      if (Array.isArray(tios)) tios.forEach(tioId => miembrosAIngresar.push({ id: tioId, tipo: 'TIO_EDI' }));
+
+      if (miembrosAIngresar.length > 0) {
+        const mReq = new sql.Request(transaction);
+        mReq.input('miembros_id_familia', sql.Int, newFamilyId);
+        const values = miembrosAIngresar.map((miembro, index) => {
+          mReq.input(`miembro_id_${index}`, sql.Int, miembro.id);
+          mReq.input(`miembro_tipo_${index}`, sql.NVarChar, miembro.tipo);
+          return `(@miembros_id_familia, @miembro_id_${index}, @miembro_tipo_${index}, 1, SYSUTCDATETIME())`;
+        });
+        await mReq.query(`
+          INSERT INTO EDI.Miembros_Familia
+            (id_familia, id_usuario, tipo_miembro, activo, created_at)
+          VALUES ${values.join(',')};
+        `);
+      }
+      return newFamilyId;
+    }, { label: 'creación de familia' });
 
 
     try {
@@ -265,7 +263,6 @@ exports.create = async (req, res) => {
     const finalRows = await queryP(withBase(Q.byId), { id_familia: { type: sql.Int, value: id_familia } });
     created(res, finalRows[0]);
   } catch (e) {
-    if (transaction.rolledBack === false) await transaction.rollback();
     fail(res, e);
   }
 };

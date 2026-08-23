@@ -3,6 +3,7 @@ const { ok, created, bad, fail } = require('../utils/http');
 const { enviarNotificacionPush, enviarNotificacionMulticast } = require('../utils/firebase');
 const { canAddEdiChildren, limitError } = require('../utils/familyChildLimit');
 const { insertarNotificaciones } = require('../utils/notificaciones');
+const { runInTransaction } = require('../utils/transaction');
 
 // ── Helper ────────────────────────────────────────────────────────────────
 /** Devuelve { id_familia, nombre_familia } si el usuario ya está en otra familia activa */
@@ -98,7 +99,6 @@ async function remove(req, res) {
 }
 
 async function addBulk(req, res) {
-  const transaction = new sql.Transaction(pool);
   try {
     const { id_familia, id_usuarios } = req.body;
     const uniqueUserIds = [...new Set(id_usuarios.map(Number))]
@@ -129,19 +129,19 @@ async function addBulk(req, res) {
       });
     }
 
-    await transaction.begin();
-    const request = new sql.Request(transaction);
-    request.input('id_familia', sql.Int, id_familia);
-    const values = uniqueUserIds.map((id_usuario, index) => {
-      request.input(`id_usuario_${index}`, sql.Int, id_usuario);
-      return `(@id_familia, @id_usuario_${index}, 'ALUMNO_ASIGNADO', 1, SYSUTCDATETIME())`;
-    });
-    await request.query(`
-      INSERT INTO EDI.Miembros_Familia
-        (id_familia, id_usuario, tipo_miembro, activo, created_at)
-      VALUES ${values.join(',')};
-    `);
-    await transaction.commit();
+    await runInTransaction(pool, async (transaction) => {
+      const request = new sql.Request(transaction);
+      request.input('id_familia', sql.Int, id_familia);
+      const values = uniqueUserIds.map((id_usuario, index) => {
+        request.input(`id_usuario_${index}`, sql.Int, id_usuario);
+        return `(@id_familia, @id_usuario_${index}, 'ALUMNO_ASIGNADO', 1, SYSUTCDATETIME())`;
+      });
+      await request.query(`
+        INSERT INTO EDI.Miembros_Familia
+          (id_familia, id_usuario, tipo_miembro, activo, created_at)
+        VALUES ${values.join(',')};
+      `);
+    }, { label: 'asignación masiva de miembros' });
 
     // Tiempo real: Actualizar lista de miembros en los clientes conectados
     if (req.io) {
@@ -153,7 +153,6 @@ async function addBulk(req, res) {
 
     return ok(res, { message: `${uniqueUserIds.length} miembro(s) agregado(s) con éxito.` });
   } catch (e) {
-    if (transaction.rolledBack === false) await transaction.rollback();
     fail(res, e);
   }
 }
@@ -163,17 +162,19 @@ async function addAlumnosToFamilia(req, res) {
   const { matriculas = [] } = req.body;
   if (!Array.isArray(matriculas) || matriculas.length === 0) return bad(res, 'Faltan matrículas');
 
-  const transaction = new sql.Transaction(pool);
   try {
-    await transaction.begin();
-    const fRes = await new sql.Request(transaction).query(`SELECT nombre_familia FROM EDI.Familias_EDI WHERE id_familia = ${id_familia}`);
-    const nombreFamilia = fRes.recordset[0]?.nombre_familia || 'Familia';
-    
-    const results = { added: [], notFound: [], errors: [], conflicts: [], usersNotif: [] };
+    const { nombreFamilia, results } = await runInTransaction(pool, async (transaction) => {
+      const familyRequest = new sql.Request(transaction);
+      familyRequest.input('idFamilia', sql.Int, Number(id_familia));
+      const fRes = await familyRequest.query('SELECT nombre_familia FROM EDI.Familias_EDI WHERE id_familia = @idFamilia');
+      const nombreFamilia = fRes.recordset[0]?.nombre_familia || 'Familia';
+      const results = { added: [], notFound: [], errors: [], conflicts: [], usersNotif: [] };
 
-    for (const matricula of matriculas) {
-      try {
-        const uRes = await new sql.Request(transaction).query(`SELECT id_usuario, fcm_token FROM EDI.Usuarios WHERE matricula = ${parseInt(matricula)}`);
+      for (const matricula of matriculas) {
+        try {
+          const userRequest = new sql.Request(transaction);
+          userRequest.input('matricula', sql.NVarChar, String(matricula));
+          const uRes = await userRequest.query('SELECT id_usuario, fcm_token FROM EDI.Usuarios WHERE matricula = @matricula');
         if (!uRes.recordset.length) { results.notFound.push(matricula); continue; }
 
         const user = uRes.recordset[0];
@@ -197,9 +198,10 @@ async function addAlumnosToFamilia(req, res) {
         `);
         results.added.push(matricula);
         results.usersNotif.push(user); 
-      } catch (err) { results.errors.push(`Matrícula ${matricula}: ${err.message}`); }
-    }
-    await transaction.commit();
+        } catch (err) { results.errors.push(`Matrícula ${matricula}: ${err.message}`); }
+      }
+      return { nombreFamilia, results };
+    }, { label: 'asignación de alumnos a familia' });
 
     // Tiempo Real
     if (req.io && results.added.length > 0) {
@@ -214,7 +216,6 @@ async function addAlumnosToFamilia(req, res) {
 
     return ok(res, { added: results.added, notFound: results.notFound, errors: results.errors, conflicts: results.conflicts });
   } catch (e) {
-    if (transaction.rolledBack === false) await transaction.rollback();
     fail(res, e);
   }
 }

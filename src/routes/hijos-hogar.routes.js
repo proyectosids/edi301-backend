@@ -2,8 +2,11 @@ const router = require('express').Router();
 const C = require('../controllers/hijos-hogar.controller');
 const authGuard = require('../middleware/authGuard');
 const roleGuard = require('../middleware/roleGuard');
+const { invalidateFamilyDetailsOnSuccess } = require('../utils/familyDetailsCache');
 
 const ROLES_ADMIN = ['Admin'];
+
+router.use(invalidateFamilyDetailsOnSuccess);
 
 router.get('/familia/:id_familia', authGuard, C.listByFamilia);
 router.post('/',                   authGuard, roleGuard(...ROLES_ADMIN), C.create);

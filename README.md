@@ -93,9 +93,12 @@ DB_POOL_IDLE_MS=60000
 DB_POOL_ACQUIRE_MS=15000
 DB_CONNECTION_TIMEOUT_MS=10000
 DB_REQUEST_TIMEOUT_MS=30000
+DB_ABORT_TRANSACTION_ON_ERROR=true
 AVAILABLE_FAMILIES_CACHE_TTL_MS=60000
 AVAILABLE_FAMILIES_CACHE_STALE_MS=600000
 AVAILABLE_FAMILIES_QUERY_TIMEOUT_MS=5000
+FAMILY_DETAILS_CACHE_TTL_MS=30000
+FAMILY_DETAILS_CACHE_STALE_MS=300000
 API_RATE_LIMIT=1000
 AUTH_RATE_LIMIT=30
 SEARCH_RATE_LIMIT=60
@@ -126,6 +129,8 @@ likes o participantes duplicados, emite una advertencia y omite solamente el
 
 Si reaparece un timeout de SQL, ejecutar `diagnostics/sql_blocking.sql` mientras
 la lentitud está ocurriendo para identificar la sesión y sentencia bloqueadora.
+Ejecutar también `diagnostics/verify_required_indexes.sql` después de desplegar
+para confirmar que los índices de las migraciones 005 y 006 están instalados.
 
 La API expone `GET /health` para liveness y `GET /ready` para comprobar SQL
 Server. En CapRover configura el health check con `/health`.

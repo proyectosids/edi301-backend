@@ -5,8 +5,10 @@ const { addMiembro, addMiembrosBulk } = require('../models/miembro.model');
 const auth = require('../middleware/authGuard');
 const allow = require('../middleware/roleGuard');
 const { invalidateAvailableFamiliesOnSuccess } = require('../utils/availableFamiliesCache');
+const { invalidateFamilyDetailsOnSuccess } = require('../utils/familyDetailsCache');
 
 router.use(invalidateAvailableFamiliesOnSuccess);
+router.use(invalidateFamilyDetailsOnSuccess);
 
 // Ruta para crear un solo miembro
 router.post('/',
