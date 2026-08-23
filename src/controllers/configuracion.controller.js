@@ -7,6 +7,7 @@ const {
   normalizeLimit,
   getEdiChildLimit,
 } = require('../utils/familyChildLimit');
+const { invalidateAvailableFamilies } = require('../utils/availableFamiliesCache');
 
 exports.getEdiChildLimit = async (_req, res) => {
   try {
@@ -42,6 +43,7 @@ exports.updateEdiChildLimit = async (req, res) => {
         },
       },
     );
+    invalidateAvailableFamilies();
 
     ok(res, {
       limite_hijos_edi: limit,

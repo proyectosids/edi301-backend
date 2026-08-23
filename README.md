@@ -93,6 +93,9 @@ DB_POOL_IDLE_MS=60000
 DB_POOL_ACQUIRE_MS=15000
 DB_CONNECTION_TIMEOUT_MS=10000
 DB_REQUEST_TIMEOUT_MS=30000
+AVAILABLE_FAMILIES_CACHE_TTL_MS=60000
+AVAILABLE_FAMILIES_CACHE_STALE_MS=600000
+AVAILABLE_FAMILIES_QUERY_TIMEOUT_MS=5000
 API_RATE_LIMIT=1000
 AUTH_RATE_LIMIT=30
 SEARCH_RATE_LIMIT=60
@@ -113,12 +116,16 @@ versión es obligatorio ejecutar:
 
 ```text
 migrations/005_performance_and_reliability.sql
+migrations/006_available_families_performance.sql
 ```
 
 La migración es idempotente y no elimina datos. La creación de índices debe
 realizarse primero en staging y fuera de hora pico en producción. Si encuentra
 likes o participantes duplicados, emite una advertencia y omite solamente el
 índice único correspondiente.
+
+Si reaparece un timeout de SQL, ejecutar `diagnostics/sql_blocking.sql` mientras
+la lentitud está ocurriendo para identificar la sesión y sentencia bloqueadora.
 
 La API expone `GET /health` para liveness y `GET /ready` para comprobar SQL
 Server. En CapRover configura el health check con `/health`.

@@ -6,8 +6,13 @@ const { saveOptimizedImage } = require('../utils/imageStorage');
 const { enviarNotificacionMulticast } = require('../utils/firebase');
 const { getActiveFcmTokensForUsers } = require('../utils/sessions');
 const { insertarNotificaciones } = require('../utils/notificaciones');
+const { getAvailableFamilies } = require('../utils/availableFamiliesCache');
 const { getEdiChildLimit, limitError } = require('../utils/familyChildLimit');
 const withBase = (tpl) => tpl.replace('{{BASE}}', Q.base);
+const availableQueryTimeoutMs = Math.max(
+  Number(process.env.AVAILABLE_FAMILIES_QUERY_TIMEOUT_MS) || 5000,
+  1000
+);
 
 // ── Helpers de validación ──────────────────────────────────────────────────
 /** Devuelve la familia activa donde el usuario ya es padre/madre, o null */
@@ -520,16 +525,19 @@ exports.updateDescripcion = async (req, res) => {
   // src/controllers/familias.controller.js
 exports.listAvailable = async (req, res) => {
   try {
-    const rows = await queryP(Q.listAvailable);
+    const result = await getAvailableFamilies(async () => {
+      const rows = await queryP(Q.listAvailable, {}, { timeoutMs: availableQueryTimeoutMs });
+      return rows.map(f => ({ ...f, padres: f.padres || 'Sin padres asignados' }));
+    });
 
-    const formatted = rows.map(f => ({
-      ...f,
-      // Verificamos que f.padres exista antes de hacer el slice
-      padres: (f.padres && f.padres.endsWith(' & ')) ? f.padres.slice(0, -3) : (f.padres || 'Sin padres')
-    }));
-    ok(res, formatted);
+    res.set('Cache-Control', 'private, max-age=30, stale-if-error=600');
+    res.set('ETag', result.etag);
+    res.set('X-EDI-Cache', result.cacheStatus);
+    if (result.cacheStatus === 'STALE') res.set('Warning', '110 - "Response is stale"');
+    if (req.get('If-None-Match') === result.etag) return res.status(304).end();
+    ok(res, result.data);
   } catch (e) {
-    console.error('Error en listAvailable:', e); // Esto te dirá exactamente qué falla
+    console.error('Error en listAvailable:', e);
     fail(res, e);
   }
 };

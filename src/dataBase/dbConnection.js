@@ -39,9 +39,10 @@ async function getConnection() {
   return pool;
 }
 
-async function queryP(query, params = {}) {
+async function queryP(query, params = {}, options = {}) {
   await poolConnect;
   const request = pool.request();
+  if (options.timeoutMs) request.timeout = Number(options.timeoutMs);
   for (const [k, v] of Object.entries(params)) {
     if (v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(v, 'value')) {
       request.input(k, v.type || sql.NVarChar, v.value);

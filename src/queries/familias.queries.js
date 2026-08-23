@@ -138,34 +138,67 @@ exports.Q = {
   updateFotoPerfil: "UPDATE familias SET foto_perfil = ? WHERE id = ?",
   updateFotoPortada: "UPDATE familias SET foto_portada = ? WHERE id = ?",
 
-listAvailable: `
-  SELECT
-    f.id_familia,
-    f.nombre_familia,
-    f.foto_portada_url AS portada,
-    f.residencia,
-    f.descripcion,
-    (SELECT COUNT(*) FROM EDI.Miembros_Familia mf
-     WHERE mf.id_familia = f.id_familia
-       AND mf.activo = 1
-       AND mf.tipo_miembro IN ('HIJO', 'ALUMNO_ASIGNADO')) as num_alumnos,
-    ISNULL(TRY_CONVERT(INT, (
-      SELECT valor FROM EDI.App_Config
-      WHERE clave = 'limite_hijos_edi_por_familia'
-    )), 7) AS limite_hijos_edi,
-    ISNULL((
-      SELECT u.nombre + ' ' + u.apellido + ' & '
-      FROM EDI.Usuarios u
-      JOIN EDI.Miembros_Familia mf ON u.id_usuario = mf.id_usuario
-      JOIN EDI.Roles r ON u.id_rol = r.id_rol
-      WHERE mf.id_familia = f.id_familia
+  listAvailable: `
+    WITH config AS (
+      SELECT ISNULL(MAX(CASE
+        WHEN clave = 'limite_hijos_edi_por_familia' THEN TRY_CONVERT(INT, valor)
+      END), 7) AS limite_hijos_edi
+      FROM EDI.App_Config
+    ),
+    member_stats AS (
+      SELECT
+        mf.id_familia,
+        SUM(CASE WHEN mf.tipo_miembro IN ('HIJO', 'ALUMNO_ASIGNADO') THEN 1 ELSE 0 END) AS num_alumnos,
+        SUM(CASE
+          WHEN mf.tipo_miembro IN ('HIJO', 'ALUMNO_ASIGNADO')
+           AND (UPPER(ISNULL(u.carrera, '')) LIKE '%COLIVI%'
+             OR UPPER(ISNULL(u.carrera, '')) LIKE '%COLEGIO LINDA VISTA%')
+          THEN 1 ELSE 0 END) AS num_colivi,
+        SUM(CASE
+          WHEN mf.tipo_miembro IN ('HIJO', 'ALUMNO_ASIGNADO')
+           AND NULLIF(LTRIM(RTRIM(ISNULL(u.carrera, ''))), '') IS NOT NULL
+           AND NOT (UPPER(ISNULL(u.carrera, '')) LIKE '%COLIVI%'
+             OR UPPER(ISNULL(u.carrera, '')) LIKE '%COLEGIO LINDA VISTA%')
+          THEN 1 ELSE 0 END) AS num_universitarios
+      FROM EDI.Miembros_Familia mf
+      JOIN EDI.Usuarios u ON u.id_usuario = mf.id_usuario
+      WHERE mf.activo = 1
+      GROUP BY mf.id_familia
+    ),
+    parent_names AS (
+      SELECT
+        mf.id_familia,
+        STRING_AGG(CONVERT(NVARCHAR(MAX), CONCAT(u.nombre, ' ', u.apellido)), N' & ') AS padres
+      FROM EDI.Miembros_Familia mf
+      JOIN EDI.Usuarios u ON u.id_usuario = mf.id_usuario AND u.activo = 1
+      JOIN EDI.Roles r ON r.id_rol = u.id_rol
+      WHERE mf.activo = 1
         AND r.nombre_rol IN ('Padre', 'Madre', 'Tutor', 'PapaEDI', 'MamaEDI')
-      FOR XML PATH('')
-    ), 'Sin padres asignados') as padres
-  FROM EDI.Familias_EDI f
-  WHERE f.activo = 1
-  ORDER BY num_alumnos ASC
-`,
+      GROUP BY mf.id_familia
+    )
+    SELECT
+      f.id_familia,
+      f.nombre_familia,
+      f.foto_portada_url AS portada,
+      f.foto_perfil_url,
+      f.residencia,
+      CASE WHEN UPPER(LTRIM(RTRIM(f.residencia))) LIKE 'INT%'
+        THEN 'INTERNA' ELSE 'EXTERNA' END AS tipo_residencia,
+      f.descripcion,
+      ISNULL(ms.num_alumnos, 0) AS num_alumnos,
+      ISNULL(ms.num_colivi, 0) AS num_colivi,
+      ISNULL(ms.num_universitarios, 0) AS num_universitarios,
+      cfg.limite_hijos_edi,
+      CASE WHEN ISNULL(ms.num_alumnos, 0) >= cfg.limite_hijos_edi
+        THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS esta_llena,
+      ISNULL(pn.padres, 'Sin padres asignados') AS padres
+    FROM EDI.Familias_EDI f
+    CROSS JOIN config cfg
+    LEFT JOIN member_stats ms ON ms.id_familia = f.id_familia
+    LEFT JOIN parent_names pn ON pn.id_familia = f.id_familia
+    WHERE f.activo = 1
+    ORDER BY ISNULL(ms.num_alumnos, 0) ASC, f.nombre_familia ASC
+  `,
 
   // ── FAMILIA MANUAL ────────────────────────────────────────────────────────
   // Inserta una familia "manual": papa_id/mama_id en NULL y los nombres
