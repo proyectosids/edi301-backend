@@ -30,7 +30,7 @@ async function add(req, res) {
     const { id_familia, id_usuario, tipo_miembro } = req.body;
 
     if (['HIJO', 'ALUMNO_ASIGNADO'].includes(tipo_miembro)) {
-      const capacity = await canAddEdiChildren(id_familia);
+      const capacity = await canAddEdiChildren(id_familia, [id_usuario]);
       if (!capacity.allowed) return bad(res, limitError(capacity));
     }
 
@@ -104,7 +104,7 @@ async function addBulk(req, res) {
     const uniqueUserIds = [...new Set(id_usuarios.map(Number))]
       .filter(id => Number.isInteger(id) && id > 0);
     if (!uniqueUserIds.length) return bad(res, 'No hay usuarios válidos para asignar');
-    const capacity = await canAddEdiChildren(id_familia, uniqueUserIds.length);
+    const capacity = await canAddEdiChildren(id_familia, uniqueUserIds);
     if (!capacity.allowed) return bad(res, limitError(capacity));
     const familiaRes = await queryP('SELECT nombre_familia FROM EDI.Familias_EDI WHERE id_familia = @id', {
         id: { type: sql.Int, value: id_familia }

@@ -10,6 +10,7 @@ exports.Q = {
       f.foto_portada_url,
       f.foto_perfil_url,
       f.descripcion,
+      f.cerrada_manualmente,
       (p.nombre + ' ' + p.apellido) AS papa_nombre,
       (m.nombre + ' ' + m.apellido) AS mama_nombre,
       p.num_empleado     AS papa_num_empleado,
@@ -71,6 +72,14 @@ exports.Q = {
     UPDATE EDI.Familias_EDI SET activo = 1 WHERE id_familia = @id_familia
   `,
 
+  updateManualCapacity: `
+    UPDATE EDI.Familias_EDI
+    SET cerrada_manualmente = @cerrada_manualmente,
+        updated_at = SYSUTCDATETIME()
+    OUTPUT INSERTED.id_familia, INSERTED.cerrada_manualmente
+    WHERE id_familia = @id_familia AND activo = 1;
+  `,
+
   listInactive: `
     SELECT
       f.id_familia,
@@ -116,6 +125,7 @@ exports.Q = {
       miembros.id_usuario,
       (u.nombre + ' ' + u.apellido) AS miembro_nombre,
       miembros.tipo_miembro,
+      r.nombre_rol AS miembro_rol,
       (SELECT COUNT(*) FROM EDI.Hijos_Hogar hh
        WHERE hh.id_familia = f.id_familia AND hh.activo = 1) AS ninos_hogar_count
     FROM EDI.Familias_EDI AS f
@@ -125,6 +135,7 @@ exports.Q = {
                                               AND miembros.activo = 1
                                               AND miembros.tipo_miembro IN ('HIJO', 'ALUMNO_ASIGNADO')
     LEFT JOIN EDI.Usuarios AS u ON u.id_usuario = miembros.id_usuario
+    LEFT JOIN EDI.Roles AS r ON r.id_rol = u.id_rol
     WHERE f.activo = 1
     ORDER BY f.nombre_familia
   `,
@@ -162,7 +173,10 @@ exports.Q = {
           THEN 1 ELSE 0 END) AS num_universitarios
       FROM EDI.Miembros_Familia mf
       JOIN EDI.Usuarios u ON u.id_usuario = mf.id_usuario
+      JOIN EDI.Roles r ON r.id_rol = u.id_rol
       WHERE mf.activo = 1
+        AND u.activo = 1
+        AND r.nombre_rol = 'HijoEDI'
       GROUP BY mf.id_familia
     ),
     parent_names AS (
@@ -185,11 +199,13 @@ exports.Q = {
       CASE WHEN UPPER(LTRIM(RTRIM(f.residencia))) LIKE 'INT%'
         THEN 'INTERNA' ELSE 'EXTERNA' END AS tipo_residencia,
       f.descripcion,
+      f.cerrada_manualmente,
       ISNULL(ms.num_alumnos, 0) AS num_alumnos,
       ISNULL(ms.num_colivi, 0) AS num_colivi,
       ISNULL(ms.num_universitarios, 0) AS num_universitarios,
       cfg.limite_hijos_edi,
-      CASE WHEN ISNULL(ms.num_alumnos, 0) >= cfg.limite_hijos_edi
+      CASE WHEN f.cerrada_manualmente = 1
+             OR ISNULL(ms.num_alumnos, 0) >= cfg.limite_hijos_edi
         THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS esta_llena,
       ISNULL(pn.padres, 'Sin padres asignados') AS padres
     FROM EDI.Familias_EDI f

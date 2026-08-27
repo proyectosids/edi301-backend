@@ -54,6 +54,9 @@ router.patch('/:id/descripcion',
   C.updateDescripcion
 );
 
+// Cierra o reabre manualmente los cupos de una familia (sólo Admin).
+router.patch('/:id/cupo-manual', auth, allow('Admin'), C.setManualCapacity);
+
 // Reactivar
 router.patch('/:id/reactivar', auth, allow('Admin'), C.reactivate);
 

@@ -69,6 +69,7 @@ CREATE TABLE [EDI].[Familias_EDI](
 	[created_at] [datetime] DEFAULT (getdate()) NOT NULL,
 	[updated_at] [datetime] NULL,
 	[activo] [bit] DEFAULT ((1)) NOT NULL,
+	[cerrada_manualmente] [bit] NOT NULL CONSTRAINT [DF_FamiliasEDI_CerradaManualmente] DEFAULT ((0)),
 	[residencia] [nvarchar](250) NOT NULL,
 	[direccion] [nvarchar](200) NULL,
 	[foto_portada_url] [nvarchar](max) NULL,

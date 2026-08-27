@@ -42,6 +42,7 @@ router.post('/cumpleanos/imagen',  auth, async (req, res) => {
 // Soft-delete: libera correo, matrícula y núm. empleado para registro futuro
 // y conserva todas las relaciones existentes (familia, mensajes, etc.).
 router.delete('/me', auth, C.deactivateMyAccount);
+router.patch('/me/contacto', auth, C.updateMyContact);
 
 // Multi-dispositivo: gestión de sesiones del usuario autenticado.
 router.get   ('/me/sesiones',     auth, C.listMySessions);          // listar

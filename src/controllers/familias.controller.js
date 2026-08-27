@@ -7,7 +7,7 @@ const { enviarNotificacionMulticast } = require('../utils/firebase');
 const { getActiveFcmTokensForUsers } = require('../utils/sessions');
 const { insertarNotificaciones } = require('../utils/notificaciones');
 const { getAvailableFamilies } = require('../utils/availableFamiliesCache');
-const { getEdiChildLimit, limitError } = require('../utils/familyChildLimit');
+const { getEdiChildLimit, countEdiChildrenForUsers, limitError } = require('../utils/familyChildLimit');
 const { runInTransaction } = require('../utils/transaction');
 const { getFamilyDetails } = require('../utils/familyDetailsCache');
 const withBase = (tpl) => tpl.replace('{{BASE}}', Q.base);
@@ -147,9 +147,12 @@ exports.create = async (req, res) => {
     // Los hijos sanguíneos se guardan en Hijos_Hogar y no cuentan aquí.
     // Este arreglo contiene únicamente usuarios EDI asignados como hijos.
     if (Array.isArray(hijos)) {
-      const limit = await getEdiChildLimit();
-      if (hijos.length > limit) {
-        return bad(res, limitError({ limit, current: 0, requested: hijos.length }));
+      const [limit, requested] = await Promise.all([
+        getEdiChildLimit(),
+        countEdiChildrenForUsers(hijos),
+      ]);
+      if (requested > limit) {
+        return bad(res, limitError({ limit, current: 0, requested }));
       }
     }
 
@@ -401,9 +404,13 @@ exports.reporteCompleto = async (_req, res) => {
 
       if (row.id_usuario) { 
         const miembroNombre = row.miembro_nombre;
-        if (row.tipo_miembro === 'HIJO' && !familia.hijos_en_casa.includes(miembroNombre)) {
+        const esHijoSanguineo = row.miembro_rol === 'HijoSanguineo';
+        const esHijoEdi = row.miembro_rol === 'HijoEDI';
+        if ((esHijoSanguineo || (!esHijoEdi && row.tipo_miembro === 'HIJO')) &&
+            !familia.hijos_en_casa.includes(miembroNombre)) {
           familia.hijos_en_casa.push(miembroNombre);
-        } else if (row.tipo_miembro === 'ALUMNO_ASIGNADO' && !familia.alumnos_asignados.includes(miembroNombre)) {
+        } else if ((esHijoEdi || row.tipo_miembro === 'ALUMNO_ASIGNADO') &&
+                   !familia.alumnos_asignados.includes(miembroNombre)) {
           familia.alumnos_asignados.push(miembroNombre);
         }
       }
@@ -537,6 +544,28 @@ exports.listAvailable = async (req, res) => {
     console.error('Error en listAvailable:', e);
     fail(res, e);
   }
+};
+
+// Permite al administrador cerrar una familia antes de alcanzar su límite de
+// hijos EDI, o reabrirla después si vuelve a tener cupo.
+exports.setManualCapacity = async (req, res) => {
+  try {
+    const id_familia = Number(req.params.id);
+    const value = req.body?.cerrada_manualmente;
+    if (!Number.isInteger(id_familia) || id_familia <= 0) {
+      return bad(res, 'Id de familia inválido');
+    }
+    if (typeof value !== 'boolean') {
+      return bad(res, 'cerrada_manualmente debe ser verdadero o falso');
+    }
+
+    const rows = await queryP(Q.updateManualCapacity, {
+      id_familia: { type: sql.Int, value: id_familia },
+      cerrada_manualmente: { type: sql.Bit, value },
+    });
+    if (!rows.length) return notFound(res);
+    ok(res, rows[0]);
+  } catch (e) { fail(res, e); }
 };
 
 // ============================================================================

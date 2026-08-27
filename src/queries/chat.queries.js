@@ -70,8 +70,8 @@ exports.Q = {
     )
       RETURN;
 
-    INSERT INTO EDI.Chat_Mensajes (id_sala, id_usuario, mensaje, tipo_mensaje)
-    VALUES (@id_sala, @id_usuario, @mensaje, @tipo_mensaje);
+    INSERT INTO EDI.Chat_Mensajes (id_sala, id_usuario, mensaje, tipo_mensaje, created_at)
+    VALUES (@id_sala, @id_usuario, @mensaje, @tipo_mensaje, SYSUTCDATETIME());
 
     DECLARE @id_mensaje INT = SCOPE_IDENTITY();
 
@@ -81,7 +81,7 @@ exports.Q = {
     m.id_usuario,
     u.nombre as nombre_remitente,
     m.mensaje,
-    m.created_at
+    CONVERT(varchar(33), m.created_at, 126) + 'Z' AS created_at
 FROM EDI.Chat_Mensajes m
 JOIN EDI.Usuarios u ON u.id_usuario = m.id_usuario
 WHERE m.id_mensaje = @id_mensaje;
@@ -112,7 +112,7 @@ WHERE m.id_mensaje = @id_mensaje;
         WHERE m.id_sala = s.id_sala
         ORDER BY m.created_at DESC) as ultimo_mensaje,
 
-      (SELECT TOP 1 m.created_at
+      (SELECT TOP 1 CONVERT(varchar(33), m.created_at, 126) + 'Z'
         FROM EDI.Chat_Mensajes m
         WHERE m.id_sala = s.id_sala
         ORDER BY m.created_at DESC) as fecha_ultimo,
@@ -174,7 +174,7 @@ WHERE m.id_mensaje = @id_mensaje;
         m.id_usuario,
         u.nombre as nombre_remitente,
         m.mensaje,
-        m.created_at,
+        CONVERT(varchar(33), m.created_at, 126) + 'Z' AS created_at,
         CASE WHEN m.id_usuario = @id_usuario THEN 1 ELSE 0 END as es_mio
       FROM EDI.Chat_Mensajes m
       JOIN EDI.Usuarios u ON u.id_usuario = m.id_usuario

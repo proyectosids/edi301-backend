@@ -1,9 +1,11 @@
 exports.Q = {
   create: `
-    INSERT INTO EDI.Mensajes_Chat (id_familia, id_usuario, contenido, activo)
-    VALUES (@id_familia, @id_usuario, @mensaje, 1);
+    INSERT INTO EDI.Mensajes_Chat (id_familia, id_usuario, contenido, activo, created_at)
+    VALUES (@id_familia, @id_usuario, @mensaje, 1, SYSUTCDATETIME());
     
-    SELECT id_mensaje, contenido as mensaje, created_at, id_usuario 
+    SELECT id_mensaje, contenido as mensaje,
+           CONVERT(varchar(33), created_at, 126) + 'Z' AS created_at,
+           id_usuario
     FROM EDI.Mensajes_Chat 
     WHERE id_mensaje = SCOPE_IDENTITY();
   `,
@@ -12,7 +14,7 @@ exports.Q = {
     SELECT * FROM (
       SELECT TOP (@limit) m.id_mensaje,
            m.contenido as mensaje, 
-           m.created_at, 
+           CONVERT(varchar(33), m.created_at, 126) + 'Z' AS created_at,
            m.id_usuario,
            u.nombre, u.apellido, u.foto_perfil, 
            ISNULL(r.nombre_rol, 'Usuario') as nombre_rol

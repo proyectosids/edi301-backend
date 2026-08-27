@@ -320,6 +320,61 @@ exports.updateEmail = async (req, res) => {
   } catch (e) { fail(res, e); }
 };
 
+// Actualización limitada y autocontenida del perfil. El número telefónico es
+// editable por cualquier usuario; la residencia sólo por empleados.
+exports.updateMyContact = async (req, res) => {
+  try {
+    const idUsuario = Number(req.user?.id_usuario);
+    if (!Number.isInteger(idUsuario) || idUsuario <= 0) return bad(res, 'No autenticado');
+
+    const body = req.body || {};
+    const hasTelefono = Object.prototype.hasOwnProperty.call(body, 'telefono');
+    const hasResidencia = Object.prototype.hasOwnProperty.call(body, 'residencia');
+    const telefono = hasTelefono ? String(body.telefono ?? '').trim() : null;
+    const residencia = hasResidencia ? String(body.residencia ?? '').trim() : null;
+    const direccion = Object.prototype.hasOwnProperty.call(body, 'direccion')
+      ? String(body.direccion ?? '').trim()
+      : null;
+
+    if (!hasTelefono && !hasResidencia) return bad(res, 'No hay datos para actualizar');
+    if (hasTelefono && !/^[0-9+()\-\s]{7,20}$/.test(telefono)) {
+      return bad(res, 'El teléfono debe contener entre 7 y 20 caracteres válidos');
+    }
+    if (hasResidencia && req.user?.tipo_usuario !== 'EMPLEADO') {
+      return res.status(403).json({ error: 'Sólo los empleados pueden actualizar su residencia' });
+    }
+    if (hasResidencia && !['Interna', 'Externa'].includes(residencia)) {
+      return bad(res, 'La residencia debe ser Interna o Externa');
+    }
+    if (residencia === 'Externa' && !direccion) {
+      return bad(res, 'La dirección es requerida para residencia externa');
+    }
+
+    const rows = await queryP(`
+      UPDATE EDI.Usuarios
+      SET telefono = CASE WHEN @has_telefono = 1 THEN @telefono ELSE telefono END,
+          residencia = CASE WHEN @has_residencia = 1 THEN @residencia ELSE residencia END,
+          direccion = CASE
+            WHEN @has_residencia = 1 AND @residencia = 'Interna' THEN NULL
+            WHEN @has_residencia = 1 AND @residencia = 'Externa' THEN @direccion
+            ELSE direccion
+          END,
+          updated_at = SYSUTCDATETIME()
+      OUTPUT INSERTED.id_usuario, INSERTED.telefono, INSERTED.residencia, INSERTED.direccion
+      WHERE id_usuario = @id_usuario AND activo = 1;
+    `, {
+      id_usuario: { type: sql.Int, value: idUsuario },
+      has_telefono: { type: sql.Bit, value: hasTelefono },
+      telefono: { type: sql.NVarChar, value: telefono },
+      has_residencia: { type: sql.Bit, value: hasResidencia },
+      residencia: { type: sql.NVarChar, value: residencia },
+      direccion: { type: sql.NVarChar, value: direccion || null },
+    });
+    if (!rows.length) return notFound(res);
+    ok(res, rows[0]);
+  } catch (e) { fail(res, e); }
+};
+
 exports.updateToken = async (req, res) => {
   try {
     const { id_usuario, fcm_token, token, session_token } = req.body;

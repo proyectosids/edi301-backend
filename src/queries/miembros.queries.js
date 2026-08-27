@@ -7,11 +7,13 @@ exports.Q = {
     SELECT 
       mf.*, 
       u.nombre, u.apellido, u.tipo_usuario, 
+      r.nombre_rol,
       u.matricula, u.num_empleado,
       u.fecha_nacimiento, u.telefono, u.carrera,
       u.foto_perfil AS foto_perfil_url
     FROM EDI.Miembros_Familia mf
     JOIN EDI.Usuarios u ON u.id_usuario = mf.id_usuario
+    LEFT JOIN EDI.Roles r ON r.id_rol = u.id_rol
     WHERE mf.id_familia = @id_familia AND mf.activo = 1
   `,
   remove: `UPDATE EDI.Miembros_Familia SET activo = 0, updated_at = GETDATE() WHERE id_miembro = @id_miembro`
