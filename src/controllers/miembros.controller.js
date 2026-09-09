@@ -29,7 +29,7 @@ async function add(req, res) {
   try {
     const { id_familia, id_usuario, tipo_miembro } = req.body;
 
-    if (['HIJO', 'ALUMNO_ASIGNADO'].includes(tipo_miembro)) {
+    if (tipo_miembro === 'ALUMNO_ASIGNADO') {
       const capacity = await canAddEdiChildren(id_familia, [id_usuario]);
       if (!capacity.allowed) return bad(res, limitError(capacity));
     }
@@ -163,6 +163,19 @@ async function addAlumnosToFamilia(req, res) {
   if (!Array.isArray(matriculas) || matriculas.length === 0) return bad(res, 'Faltan matrículas');
 
   try {
+    const matriculaParams = Object.fromEntries(matriculas.map((matricula, index) => [
+      `matricula_${index}`,
+      { type: sql.NVarChar, value: String(matricula) },
+    ]));
+    const usuarios = await queryP(`
+      SELECT id_usuario
+      FROM EDI.Usuarios
+      WHERE matricula IN (${matriculas.map((_, index) => `@matricula_${index}`).join(', ')})
+        AND activo = 1
+    `, matriculaParams);
+    const capacity = await canAddEdiChildren(id_familia, usuarios.map(u => u.id_usuario));
+    if (!capacity.allowed) return bad(res, limitError(capacity));
+
     const { nombreFamilia, results } = await runInTransaction(pool, async (transaction) => {
       const familyRequest = new sql.Request(transaction);
       familyRequest.input('idFamilia', sql.Int, Number(id_familia));
@@ -193,7 +206,7 @@ async function addAlumnosToFamilia(req, res) {
           IF NOT EXISTS (SELECT 1 FROM EDI.Miembros_Familia WHERE id_familia = @idF AND id_usuario = @idU)
           BEGIN
             INSERT INTO EDI.Miembros_Familia (id_familia, id_usuario, tipo_miembro, activo, created_at)
-            VALUES (@idF, @idU, 'HIJO', 1, SYSDATETIME())
+            VALUES (@idF, @idU, 'ALUMNO_ASIGNADO', 1, SYSDATETIME())
           END
         `);
         results.added.push(matricula);

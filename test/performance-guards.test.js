@@ -59,6 +59,32 @@ test('available families query aggregates once instead of correlated XML queries
   assert.doesNotMatch(familyQueries.listAvailable, /FOR\s+XML/i);
 });
 
+test('family capacity counts only ALUMNO_ASIGNADO relationships', () => {
+  assert.match(
+    familyQueries.listAvailable,
+    /SUM\(CASE WHEN mf\.tipo_miembro = 'ALUMNO_ASIGNADO' THEN 1 ELSE 0 END\) AS num_alumnos/i
+  );
+  const limitSource = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'utils', 'familyChildLimit.js'),
+    'utf8'
+  );
+  assert.match(limitSource, /mf\.tipo_miembro = 'ALUMNO_ASIGNADO'/i);
+  assert.doesNotMatch(limitSource, /r\.nombre_rol = 'HijoEDI'/i);
+  assert.match(limitSource, /allowed:\s*requested === 0 \|\| !manuallyClosed/i);
+});
+
+test('family reports classify members by their family relationship', () => {
+  assert.match(familyQueries.reporteCompleto, /'HIJO', 'ALUMNO_ASIGNADO', 'TIO_EDI'/i);
+  const familyController = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'controllers', 'familias.controller.js'),
+    'utf8'
+  );
+  assert.match(familyController, /row\.tipo_miembro === 'HIJO'/);
+  assert.match(familyController, /row\.tipo_miembro === 'ALUMNO_ASIGNADO'/);
+  assert.match(familyController, /row\.tipo_miembro === 'TIO_EDI'/);
+  assert.doesNotMatch(familyController, /row\.miembro_rol/);
+});
+
 test('available families migration adds filtered lookup indexes', () => {
   const migration = fs.readFileSync(
     path.join(__dirname, '..', 'migrations', '006_available_families_performance.sql'),

@@ -7,7 +7,6 @@ const { enviarNotificacionMulticast } = require('../utils/firebase');
 const { getActiveFcmTokensForUsers } = require('../utils/sessions');
 const { insertarNotificaciones } = require('../utils/notificaciones');
 const { getAvailableFamilies } = require('../utils/availableFamiliesCache');
-const { getEdiChildLimit, countEdiChildrenForUsers, limitError } = require('../utils/familyChildLimit');
 const { runInTransaction } = require('../utils/transaction');
 const { getFamilyDetails } = require('../utils/familyDetailsCache');
 const withBase = (tpl) => tpl.replace('{{BASE}}', Q.base);
@@ -142,18 +141,6 @@ exports.create = async (req, res) => {
       .map(Number);
     if (new Set(idsIntegrantes).size !== idsIntegrantes.length) {
       return bad(res, 'Una persona solo puede ocupar un lugar dentro de la misma familia.');
-    }
-
-    // Los hijos sanguíneos se guardan en Hijos_Hogar y no cuentan aquí.
-    // Este arreglo contiene únicamente usuarios EDI asignados como hijos.
-    if (Array.isArray(hijos)) {
-      const [limit, requested] = await Promise.all([
-        getEdiChildLimit(),
-        countEdiChildrenForUsers(hijos),
-      ]);
-      if (requested > limit) {
-        return bad(res, limitError({ limit, current: 0, requested }));
-      }
     }
 
     // Validar que los padres no estén asignados a otra familia activa
@@ -395,6 +382,7 @@ exports.reporteCompleto = async (_req, res) => {
           mama_nombre: row.mama_nombre,
           hijos_en_casa: [],
           alumnos_asignados: [],
+          tios_edi: [],
           ninos_hogar_count: row.ninos_hogar_count ?? 0,
           total_miembros: 0
         });
@@ -404,14 +392,15 @@ exports.reporteCompleto = async (_req, res) => {
 
       if (row.id_usuario) { 
         const miembroNombre = row.miembro_nombre;
-        const esHijoSanguineo = row.miembro_rol === 'HijoSanguineo';
-        const esHijoEdi = row.miembro_rol === 'HijoEDI';
-        if ((esHijoSanguineo || (!esHijoEdi && row.tipo_miembro === 'HIJO')) &&
+        if (row.tipo_miembro === 'HIJO' &&
             !familia.hijos_en_casa.includes(miembroNombre)) {
           familia.hijos_en_casa.push(miembroNombre);
-        } else if ((esHijoEdi || row.tipo_miembro === 'ALUMNO_ASIGNADO') &&
+        } else if (row.tipo_miembro === 'ALUMNO_ASIGNADO' &&
                    !familia.alumnos_asignados.includes(miembroNombre)) {
           familia.alumnos_asignados.push(miembroNombre);
+        } else if (row.tipo_miembro === 'TIO_EDI' &&
+                   !familia.tios_edi.includes(miembroNombre)) {
+          familia.tios_edi.push(miembroNombre);
         }
       }
     }
@@ -422,6 +411,7 @@ exports.reporteCompleto = async (_req, res) => {
        if (familia.mama_nombre) count++;
        count += familia.hijos_en_casa.length;
        count += familia.alumnos_asignados.length;
+       count += familia.tios_edi.length;
        count += familia.ninos_hogar_count ?? 0;
        familia.total_miembros = count;
     });

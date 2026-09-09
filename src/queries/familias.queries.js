@@ -125,7 +125,6 @@ exports.Q = {
       miembros.id_usuario,
       (u.nombre + ' ' + u.apellido) AS miembro_nombre,
       miembros.tipo_miembro,
-      r.nombre_rol AS miembro_rol,
       (SELECT COUNT(*) FROM EDI.Hijos_Hogar hh
        WHERE hh.id_familia = f.id_familia AND hh.activo = 1) AS ninos_hogar_count
     FROM EDI.Familias_EDI AS f
@@ -133,9 +132,8 @@ exports.Q = {
     LEFT JOIN EDI.Usuarios AS m ON m.id_usuario = f.mama_id
     LEFT JOIN EDI.Miembros_Familia AS miembros ON miembros.id_familia = f.id_familia
                                               AND miembros.activo = 1
-                                              AND miembros.tipo_miembro IN ('HIJO', 'ALUMNO_ASIGNADO')
+                                              AND miembros.tipo_miembro IN ('HIJO', 'ALUMNO_ASIGNADO', 'TIO_EDI')
     LEFT JOIN EDI.Usuarios AS u ON u.id_usuario = miembros.id_usuario
-    LEFT JOIN EDI.Roles AS r ON r.id_rol = u.id_rol
     WHERE f.activo = 1
     ORDER BY f.nombre_familia
   `,
@@ -159,24 +157,22 @@ exports.Q = {
     member_stats AS (
       SELECT
         mf.id_familia,
-        SUM(CASE WHEN mf.tipo_miembro IN ('HIJO', 'ALUMNO_ASIGNADO') THEN 1 ELSE 0 END) AS num_alumnos,
+        SUM(CASE WHEN mf.tipo_miembro = 'ALUMNO_ASIGNADO' THEN 1 ELSE 0 END) AS num_alumnos,
         SUM(CASE
-          WHEN mf.tipo_miembro IN ('HIJO', 'ALUMNO_ASIGNADO')
+          WHEN mf.tipo_miembro = 'ALUMNO_ASIGNADO'
            AND (UPPER(ISNULL(u.carrera, '')) LIKE '%COLIVI%'
              OR UPPER(ISNULL(u.carrera, '')) LIKE '%COLEGIO LINDA VISTA%')
           THEN 1 ELSE 0 END) AS num_colivi,
         SUM(CASE
-          WHEN mf.tipo_miembro IN ('HIJO', 'ALUMNO_ASIGNADO')
+          WHEN mf.tipo_miembro = 'ALUMNO_ASIGNADO'
            AND NULLIF(LTRIM(RTRIM(ISNULL(u.carrera, ''))), '') IS NOT NULL
            AND NOT (UPPER(ISNULL(u.carrera, '')) LIKE '%COLIVI%'
              OR UPPER(ISNULL(u.carrera, '')) LIKE '%COLEGIO LINDA VISTA%')
           THEN 1 ELSE 0 END) AS num_universitarios
       FROM EDI.Miembros_Familia mf
       JOIN EDI.Usuarios u ON u.id_usuario = mf.id_usuario
-      JOIN EDI.Roles r ON r.id_rol = u.id_rol
       WHERE mf.activo = 1
         AND u.activo = 1
-        AND r.nombre_rol = 'HijoEDI'
       GROUP BY mf.id_familia
     ),
     parent_names AS (
