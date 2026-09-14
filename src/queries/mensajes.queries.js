@@ -1,13 +1,24 @@
 exports.Q = {
+  // Devuelve EXACTAMENTE las mismas columnas que listByFamilia (nombre,
+  // apellido, foto_perfil y rol incluidos). Así el mensaje que se emite por
+  // socket se puede pintar tal cual en el chat, sin que el cliente tenga que
+  // volver a pedir la lista completa solo para saber quién lo escribió.
   create: `
     INSERT INTO EDI.Mensajes_Chat (id_familia, id_usuario, contenido, activo, created_at)
     VALUES (@id_familia, @id_usuario, @mensaje, 1, SYSUTCDATETIME());
-    
-    SELECT id_mensaje, contenido as mensaje,
-           CONVERT(varchar(33), created_at, 126) + 'Z' AS created_at,
-           id_usuario
-    FROM EDI.Mensajes_Chat 
-    WHERE id_mensaje = SCOPE_IDENTITY();
+
+    DECLARE @id_mensaje INT = SCOPE_IDENTITY();
+
+    SELECT m.id_mensaje,
+           m.contenido AS mensaje,
+           CONVERT(varchar(33), m.created_at, 126) + 'Z' AS created_at,
+           m.id_usuario,
+           u.nombre, u.apellido, u.foto_perfil,
+           ISNULL(r.nombre_rol, 'Usuario') AS nombre_rol
+    FROM EDI.Mensajes_Chat m
+    JOIN EDI.Usuarios u ON u.id_usuario = m.id_usuario
+    LEFT JOIN EDI.Roles r ON r.id_rol = u.id_rol
+    WHERE m.id_mensaje = @id_mensaje;
   `,
 
   listByFamilia: `

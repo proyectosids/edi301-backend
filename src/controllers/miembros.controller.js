@@ -91,7 +91,9 @@ async function remove(req, res) {
     });
 
     if (info[0] && req.io) {
-      req.io.to(info[0].id_familia.toString()).emit('miembro_eliminado', { id_miembro: id });
+      // Antes emitía a la sala "42" en vez de "familia_42", así que este
+      // evento no le llegaba a nadie.
+      req.io.to(`familia_${info[0].id_familia}`).emit('miembro_eliminado', { id_miembro: id });
     }
 
     return ok(res, { message: 'Eliminado' });
@@ -187,7 +189,10 @@ async function addAlumnosToFamilia(req, res) {
         try {
           const userRequest = new sql.Request(transaction);
           userRequest.input('matricula', sql.NVarChar, String(matricula));
-          const uRes = await userRequest.query('SELECT id_usuario, fcm_token FROM EDI.Usuarios WHERE matricula = @matricula');
+          // activo = 1: una matrícula de una cuenta eliminada por el admin
+          // sigue existiendo en la tabla, y sin este filtro se podía asignar
+          // a la familia un alumno dado de baja.
+          const uRes = await userRequest.query('SELECT id_usuario, fcm_token FROM EDI.Usuarios WHERE matricula = @matricula AND activo = 1');
         if (!uRes.recordset.length) { results.notFound.push(matricula); continue; }
 
         const user = uRes.recordset[0];

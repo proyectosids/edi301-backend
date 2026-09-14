@@ -7,7 +7,8 @@ const { Server } = require('socket.io');
 
 const app = require('./app');
 const { initCronJobs } = require('./services/birthday.service');
-const { closeConnection } = require('./dataBase/dbConnection');
+const { sql, queryP, closeConnection } = require('./dataBase/dbConnection');
+const UQ = require('./queries/usuarios.queries').Q;
 
 const configuredOrigins = String(process.env.CORS_ORIGINS || '')
   .split(',')
@@ -51,7 +52,115 @@ const io = new Server(server, {
 
 app.set('socketio', io);
 
+// ── Autenticación del socket ────────────────────────────────────────────────
+// Sin esto cualquier cliente podía emitir join_room('sala_7') y leer en vivo
+// el chat privado de otras personas. El token es el mismo session_token que
+// usa authGuard para la API REST.
+io.use(async (socket, next) => {
+  try {
+    const raw =
+      socket.handshake.auth?.token ||
+      socket.handshake.headers?.authorization ||
+      socket.handshake.query?.token ||
+      '';
+
+    const value = String(raw).trim();
+    const token = value.startsWith('Bearer ') ? value.slice(7).trim() : value;
+
+    if (!token) {
+      return next(new Error('unauthorized'));
+    }
+
+    const rows = await queryP(UQ.sessionByToken, {
+      session_token: { type: sql.NVarChar, value: token },
+    });
+
+    if (!rows.length) {
+      return next(new Error('unauthorized'));
+    }
+
+    const row = rows[0];
+
+    if (row.usuario_activo === false || row.usuario_activo === 0) {
+      return next(new Error('unauthorized'));
+    }
+
+    socket.data.user = {
+      id_usuario: Number(row.id_usuario),
+      nombre_rol: row.nombre_rol,
+    };
+
+    next();
+  } catch (error) {
+    console.error('[socket] Error autenticando:', error.message);
+    next(new Error('unauthorized'));
+  }
+});
+
+/**
+ * ¿Este usuario puede entrar a esta sala? Se valida contra la base de datos,
+ * no contra lo que diga el cliente.
+ *   institucional  → cualquier usuario autenticado
+ *   user_<id>      → solo uno mismo
+ *   sala_<id>      → solo participantes del chat
+ *   familia_<id>   → miembros de la familia, papá/mamá titulares, o un Admin
+ */
+async function puedeEntrarASala(user, roomId) {
+  if (roomId === 'institucional') return true;
+
+  const propio = /^user_(\d+)$/.exec(roomId);
+  if (propio) {
+    return Number(propio[1]) === user.id_usuario;
+  }
+
+  const sala = /^sala_(\d+)$/.exec(roomId);
+  if (sala) {
+    const rows = await queryP(
+      `SELECT TOP 1 1 AS permitido
+       FROM EDI.Chat_Participantes
+       WHERE id_sala = @id_sala AND id_usuario = @id_usuario`,
+      {
+        id_sala: { type: sql.Int, value: Number(sala[1]) },
+        id_usuario: { type: sql.Int, value: user.id_usuario },
+      }
+    );
+    return rows.length > 0;
+  }
+
+  const familia = /^familia_(\d+)$/.exec(roomId);
+  if (familia) {
+    if (user.nombre_rol === 'Admin') return true;
+    const rows = await queryP(
+      `SELECT TOP 1 1 AS permitido
+       FROM EDI.Familias_EDI f
+       LEFT JOIN EDI.Miembros_Familia mf
+         ON mf.id_familia = f.id_familia
+        AND mf.activo = 1
+        AND mf.id_usuario = @id_usuario
+       WHERE f.id_familia = @id_familia
+         AND f.activo = 1
+         AND (mf.id_usuario IS NOT NULL
+              OR f.papa_id = @id_usuario
+              OR f.mama_id = @id_usuario)`,
+      {
+        id_familia: { type: sql.Int, value: Number(familia[1]) },
+        id_usuario: { type: sql.Int, value: user.id_usuario },
+      }
+    );
+    return rows.length > 0;
+  }
+
+  // Cualquier otro nombre de sala se rechaza.
+  return false;
+}
+
 io.on('connection', (socket) => {
+  const user = socket.data.user;
+
+  // Sala propia: sirve para avisos dirigidos a esta persona (por ejemplo, el
+  // badge de mensajes sin leer cuando no tiene el chat abierto).
+  socket.join(`user_${user.id_usuario}`);
+
   let eventCount = 0;
   let windowStartedAt = Date.now();
 
@@ -71,7 +180,7 @@ io.on('connection', (socket) => {
     );
   }
 
-  socket.on('join_room', (rawRoomId) => {
+  socket.on('join_room', async (rawRoomId) => {
     if (!allowRoomEvent()) {
       return socket.emit('room_error', {
         error: 'Demasiados eventos de sala'
@@ -84,13 +193,35 @@ io.on('connection', (socket) => {
       process.env.SOCKET_MAX_ROOMS || 20
     );
 
+    // socket.rooms siempre incluye la sala propia del socket (su id), por eso
+    // se descuenta antes de comparar contra el límite.
+    const salasUnidas = socket.rooms.size - 1;
+
     if (
       !roomId ||
       roomId.length > 100 ||
-      socket.rooms.size > maxRooms
+      salasUnidas >= maxRooms
     ) {
       return socket.emit('room_error', {
         error: 'Sala inválida o límite alcanzado'
+      });
+    }
+
+    try {
+      if (!(await puedeEntrarASala(user, roomId))) {
+        console.warn(
+          `[socket] Usuario ${user.id_usuario} intentó entrar a "${roomId}" sin permiso.`
+        );
+        return socket.emit('room_error', {
+          error: 'No tienes acceso a esta sala',
+          roomId
+        });
+      }
+    } catch (error) {
+      console.error('[socket] Error validando sala:', error.message);
+      return socket.emit('room_error', {
+        error: 'No se pudo validar la sala',
+        roomId
       });
     }
 
@@ -121,8 +252,10 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('disconnect', () => {
-    console.log(`Socket desconectado: ${socket.id}`);
+  socket.on('disconnect', (reason) => {
+    console.log(
+      `Socket desconectado: ${socket.id} (usuario ${user.id_usuario}) — ${reason}`
+    );
   });
 });
 

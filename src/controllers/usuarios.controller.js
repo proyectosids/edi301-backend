@@ -153,6 +153,7 @@ exports.searchUsers = async (req, res) => {
         u.foto_perfil     AS FotoPerfil
       FROM EDI.Usuarios u
       WHERE u.tipo_usuario = @tipo
+        AND u.activo = 1
     `;
 
     let sqlText = '';

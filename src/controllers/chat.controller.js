@@ -86,13 +86,13 @@ exports.sendMessage = async (req, res) => {
         ok(res, { message: 'Enviado' });
 
         // Notificar en segundo plano
-        _sendPushToRoom(id_sala, myId, myName, mensaje);
+        _sendPushToRoom(id_sala, myId, myName, mensaje, io);
 
     } catch (e) { fail(res, e); }
 };
 
 
-async function _sendPushToRoom(idSala, senderId, senderName, messageText) {
+async function _sendPushToRoom(idSala, senderId, senderName, messageText, io) {
     try {
         // Buscar tokens de todos los participantes excepto el emisor
         const queryTokens = `
@@ -126,6 +126,17 @@ async function _sendPushToRoom(idSala, senderId, senderName, messageText) {
             idSala: { type: sql.Int, value: idSala },
             senderId: { type: sql.Int, value: senderId }
         });
+
+        // Badge en vivo: avisar a cada destinatario en su sala personal, aunque
+        // no tenga ese chat abierto. Se reutiliza la consulta de arriba para no
+        // pegarle otra vez a la base de datos.
+        if (io) {
+            for (const recipient of allRecipients) {
+                io.to(`user_${recipient.id_usuario}`).emit('chat_actualizado', {
+                    id_sala: idSala,
+                });
+            }
+        }
 
         await insertarNotificaciones(
             allRecipients.map(r => r.id_usuario),

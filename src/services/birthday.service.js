@@ -5,14 +5,104 @@ const {
   insertarNotificaciones,
   insertarNotificacionesUsuariosActivos,
 } = require('../utils/notificaciones');
-const ID_AUTOR_SISTEMA = 1; 
+// ── Autor de las publicaciones de cumpleaños ────────────────────────────────
+// Antes esto era `const ID_AUTOR_SISTEMA = 1`, un id fijo. Cuando esa cuenta se
+// eliminó, las felicitaciones siguieron firmadas por un usuario inactivo.
+// Ahora se resuelve en cada corrida y SIEMPRE se verifica que la cuenta esté
+// activa; si no hay una válida, no se publica nada.
+const CONFIG_AUTOR_CUMPLEANOS = 'cumpleanos_autor_id';
+const NOMBRE_AUTOR_CUMPLEANOS = 'Capellania Universitaria';
+
 let IMAGEN_CUMPLEANOS = '/uploads/image.png';
 const getImagenCumpleanos = () => IMAGEN_CUMPLEANOS;
 const setImagenCumpleanos = (url) => { IMAGEN_CUMPLEANOS = url; };
+
+/** Devuelve {id_usuario, nombre, apellido} solo si la cuenta está activa. */
+async function _usuarioActivo(idUsuario) {
+  const rows = await queryP(`
+    SELECT TOP 1 id_usuario, nombre, apellido
+    FROM EDI.Usuarios
+    WHERE id_usuario = @id AND activo = 1
+  `, { id: { type: sql.Int, value: Number(idUsuario) } });
+  return rows[0] || null;
+}
+
+/**
+ * Resuelve quién firma las publicaciones de cumpleaños, en este orden:
+ *   1. EDI.App_Config → clave 'cumpleanos_autor_id' (se puede cambiar en BD
+ *      sin volver a desplegar).
+ *   2. La cuenta ACTIVA llamada "Capellanía Universitaria" (sin distinguir
+ *      acentos ni mayúsculas).
+ *   3. La variable de entorno BIRTHDAY_AUTHOR_USER_ID.
+ * Devuelve null si ninguna existe o si todas están eliminadas.
+ */
+async function resolverAutorCumpleanos() {
+  // 1. Configuración en base de datos
+  try {
+    const cfg = await queryP(`
+      SELECT TOP 1 valor FROM EDI.App_Config WHERE clave = @clave
+    `, { clave: { type: sql.NVarChar, value: CONFIG_AUTOR_CUMPLEANOS } });
+
+    const idCfg = Number(cfg[0]?.valor);
+    if (Number.isInteger(idCfg) && idCfg > 0) {
+      const autor = await _usuarioActivo(idCfg);
+      if (autor) return autor;
+      console.warn(
+        `⚠️  App_Config.${CONFIG_AUTOR_CUMPLEANOS} apunta al usuario ${idCfg}, ` +
+        'pero esa cuenta está eliminada. Se ignora y se busca por nombre.'
+      );
+    }
+  } catch (e) {
+    console.warn('⚠️  No se pudo leer App_Config para el autor de cumpleaños:', e.message);
+  }
+
+  // 2. Por nombre, solo cuentas activas
+  const porNombre = await queryP(`
+    SELECT TOP 1 id_usuario, nombre, apellido
+    FROM EDI.Usuarios
+    WHERE activo = 1
+      AND (
+            LTRIM(RTRIM(CONCAT(nombre, ' ', ISNULL(apellido, ''))))
+              COLLATE Latin1_General_CI_AI = @nombre COLLATE Latin1_General_CI_AI
+         OR LTRIM(RTRIM(nombre))
+              COLLATE Latin1_General_CI_AI = @nombre COLLATE Latin1_General_CI_AI
+          )
+    ORDER BY id_usuario
+  `, { nombre: { type: sql.NVarChar, value: NOMBRE_AUTOR_CUMPLEANOS } });
+  if (porNombre.length > 0) return porNombre[0];
+
+  // 3. Variable de entorno como último recurso
+  const idEnv = Number(process.env.BIRTHDAY_AUTHOR_USER_ID);
+  if (Number.isInteger(idEnv) && idEnv > 0) {
+    const autor = await _usuarioActivo(idEnv);
+    if (autor) return autor;
+    console.warn(
+      `⚠️  BIRTHDAY_AUTHOR_USER_ID=${idEnv} no corresponde a una cuenta activa.`
+    );
+  }
+
+  return null;
+}
+
 const verificarCumpleanos = async () => {
   console.log('🎂 Iniciando verificación diaria de cumpleaños...');
 
   try {
+    // Sin autor válido no se publica: es preferible no felicitar a firmar
+    // las publicaciones con una cuenta eliminada.
+    const autor = await resolverAutorCumpleanos();
+    if (!autor) {
+      console.error(
+        '❌ No hay un autor válido para las publicaciones de cumpleaños. ' +
+        `Crea/activa la cuenta "${NOMBRE_AUTOR_CUMPLEANOS}" o define la clave ` +
+        `'${CONFIG_AUTOR_CUMPLEANOS}' en EDI.App_Config con el id del usuario. ` +
+        'No se publicó ninguna felicitación hoy.'
+      );
+      return;
+    }
+    const nombreAutor = `${autor.nombre} ${autor.apellido || ''}`.trim();
+    console.log(`🎂 Las felicitaciones se publicarán como "${nombreAutor}" (id ${autor.id_usuario}).`);
+
     const cumpleaneros = await queryP(`
       SELECT 
         u.id_usuario,
@@ -58,7 +148,7 @@ const verificarCumpleanos = async () => {
         VALUES
           (@idUser, 'Institucional', @msg, @img, 'CUMPLEAÑOS', 'Aprobada', SYSDATETIME(), 1)
       `, {
-        idUser: { type: sql.Int, value: ID_AUTOR_SISTEMA },
+        idUser: { type: sql.Int, value: autor.id_usuario },
         msg: { type: sql.NVarChar, value: `${titulo}\n\n${mensaje}` },
         img: { type: sql.NVarChar, value: IMAGEN_CUMPLEANOS }
       });

@@ -9,10 +9,14 @@ router.get('/', searchLimiter, async (req, res) => {
     if (!q || q.length < 2) return res.json({ alumnos: [], empleados: [], familias: [] });
 
     const params = { q: { type: sql.NVarChar, value: `%${q}%` } };
+    // `activo = 1` en las tres consultas: las cuentas y familias eliminadas
+    // (borrado lógico) no deben aparecer en la búsqueda. Antes salían todas
+    // las cuentas viejas de una misma persona junto con la vigente.
     const alumnos = await queryP(`
       SELECT TOP (25) id_usuario, nombre, apellido, tipo_usuario, matricula, num_empleado
       FROM EDI.Usuarios
       WHERE tipo_usuario = 'ALUMNO'
+        AND activo = 1
         AND (CAST(matricula AS NVARCHAR) LIKE @q OR nombre LIKE @q OR apellido LIKE @q)
     `, params);
 
@@ -20,13 +24,15 @@ router.get('/', searchLimiter, async (req, res) => {
       SELECT TOP (25) id_usuario, nombre, apellido, tipo_usuario, matricula, num_empleado
       FROM EDI.Usuarios
       WHERE tipo_usuario = 'EMPLEADO'
+        AND activo = 1
         AND (CAST(num_empleado AS NVARCHAR) LIKE @q OR nombre LIKE @q OR apellido LIKE @q)
     `, params);
 
     const familias = await queryP(`
       SELECT TOP (25) id_familia, nombre_familia, residencia
       FROM EDI.Familias_EDI
-      WHERE nombre_familia LIKE @q
+      WHERE activo = 1
+        AND nombre_familia LIKE @q
     `, params);
 
     res.json({ alumnos, empleados, familias });
