@@ -54,6 +54,21 @@ app.use((req, res, next) => {
   next();
 });
 
+// Vinculación de dominio para el autocompletado de contraseñas.
+// Rutas explícitas: express.static ignora las carpetas con punto,
+// y el archivo de Apple no tiene extensión que delate su tipo.
+const wellKnown = path.join(__dirname, 'public/.well-known');
+
+app.get('/.well-known/apple-app-site-association', (_req, res) => {
+  res.type('application/json')
+     .sendFile(path.join(wellKnown, 'apple-app-site-association'));
+});
+
+app.get('/.well-known/assetlinks.json', (_req, res) => {
+  res.type('application/json')
+     .sendFile(path.join(wellKnown, 'assetlinks.json'));
+});
+
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (_req, res) => res.json({
@@ -71,6 +86,7 @@ app.get('/ready', async (_req, res) => {
     res.status(503).json({ status: 'not_ready' });
   }
 });
+
 app.use('/api', apiLimiter);
 app.use('/api', routes);
 app.get('/', (_req, res) => {
