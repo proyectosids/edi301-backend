@@ -55,18 +55,25 @@ app.use((req, res, next) => {
 });
 
 // Vinculación de dominio para el autocompletado de contraseñas.
-// Rutas explícitas: express.static ignora las carpetas con punto,
-// y el archivo de Apple no tiene extensión que delate su tipo.
+//
+// dotfiles: 'allow' es imprescindible: `send` (la librería detrás de
+// sendFile y de express.static) responde 404 a cualquier ruta que
+// contenga un segmento que empiece con punto, y la nuestra lleva
+// .well-known. Sin esa opción los dos archivos dan 404.
+//
+// El res.type() va antes porque el archivo de Apple no tiene extensión
+// y si no saldría sin Content-Type: application/json, que es justo lo
+// que Apple exige.
 const wellKnown = path.join(__dirname, 'public/.well-known');
 
 app.get('/.well-known/apple-app-site-association', (_req, res) => {
   res.type('application/json')
-     .sendFile(path.join(wellKnown, 'apple-app-site-association'));
+     .sendFile(path.join(wellKnown, 'apple-app-site-association'), { dotfiles: 'allow' });
 });
 
 app.get('/.well-known/assetlinks.json', (_req, res) => {
   res.type('application/json')
-     .sendFile(path.join(wellKnown, 'assetlinks.json'));
+     .sendFile(path.join(wellKnown, 'assetlinks.json'), { dotfiles: 'allow' });
 });
 
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
