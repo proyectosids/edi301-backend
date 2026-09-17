@@ -13,9 +13,15 @@ const {
 const CONFIG_AUTOR_CUMPLEANOS = 'cumpleanos_autor_id';
 const NOMBRE_AUTOR_CUMPLEANOS = 'Capellania Universitaria';
 
-let IMAGEN_CUMPLEANOS = '/uploads/image.png';
-const getImagenCumpleanos = () => IMAGEN_CUMPLEANOS;
-const setImagenCumpleanos = (url) => { IMAGEN_CUMPLEANOS = url; };
+// La imagen y el texto de las felicitaciones viven en EDI.App_Config
+// (migracion 008). Antes habia aqui un
+//   let IMAGEN_CUMPLEANOS = '/uploads/image.png';
+// es decir, una variable de modulo: la imagen se subia bien a Cloudinary,
+// pero su URL solo existia en la memoria del proceso. Cualquier reinicio o
+// redeploy la borraba y el cron volvia a publicar apuntando a esa ruta por
+// defecto, que no existe. Eso es lo que la app mostraba como
+// "Imagen no disponible".
+const { getBirthdayConfig, renderPlantilla } = require('./birthdayConfig');
 
 /** Devuelve {id_usuario, nombre, apellido} solo si la cuenta está activa. */
 async function _usuarioActivo(idUsuario) {
@@ -103,6 +109,15 @@ const verificarCumpleanos = async () => {
     const nombreAutor = `${autor.nombre} ${autor.apellido || ''}`.trim();
     console.log(`🎂 Las felicitaciones se publicarán como "${nombreAutor}" (id ${autor.id_usuario}).`);
 
+    // Una sola lectura por corrida: el texto y la imagen son los mismos para
+    // todos los cumpleañeros de hoy.
+    const config = await getBirthdayConfig({ force: true });
+    if (!config.imagen_url) {
+      console.log(
+        '🎂 No hay imagen configurada. Las felicitaciones se publicarán solo con texto.'
+      );
+    }
+
     const cumpleaneros = await queryP(`
       SELECT 
         u.id_usuario,
@@ -138,8 +153,14 @@ const verificarCumpleanos = async () => {
 
       if (yaPublicado.length > 0) continue;
 
-      const titulo = `¡Feliz cumpleaños ${nombreCompleto}! 🎂🎉🎊`;
-      const mensaje = "El departamento de capellanía te desea lo mejor hoy en este día tan especial. ¡Que Dios te bendiga grandemente!";
+      const titulo = renderPlantilla(config.titulo, user);
+      const mensaje = renderPlantilla(config.mensaje, user);
+
+      // EDI.Publicaciones.mensaje es NVARCHAR(500) y aqui guardamos
+      // titulo + mensaje en esa unica columna. El endpoint ya valida las
+      // longitudes al guardar; este recorte cubre el caso de que alguien
+      // edite EDI.App_Config a mano.
+      const cuerpoPost = `${titulo}\n\n${mensaje}`.slice(0, 500);
 
       const postResult = await queryP(`
         INSERT INTO EDI.Publicaciones
@@ -149,8 +170,10 @@ const verificarCumpleanos = async () => {
           (@idUser, 'Institucional', @msg, @img, 'CUMPLEAÑOS', 'Aprobada', SYSDATETIME(), 1)
       `, {
         idUser: { type: sql.Int, value: autor.id_usuario },
-        msg: { type: sql.NVarChar, value: `${titulo}\n\n${mensaje}` },
-        img: { type: sql.NVarChar, value: IMAGEN_CUMPLEANOS }
+        msg: { type: sql.NVarChar, value: cuerpoPost },
+        // null cuando no hay imagen configurada: la publicacion sale solo con
+        // texto en vez de con un enlace roto.
+        img: { type: sql.NVarChar, value: config.imagen_url }
       });
 
       const idPost = postResult[0].id_post;
@@ -365,4 +388,6 @@ const initCronJobs = () => {
   return () => jobs.forEach(job => job.stop());
 };
 
-module.exports = { initCronJobs, getImagenCumpleanos, setImagenCumpleanos };
+// verificarCumpleanos se exporta para poder dispararlo a mano (pruebas o un
+// endpoint de admin) sin esperar a las 8:00.
+module.exports = { initCronJobs, verificarCumpleanos };

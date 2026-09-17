@@ -21,6 +21,7 @@ router.use('/hijos-hogar', require('./hijos-hogar.routes'));
 router.use('/renovaciones', require('./renovaciones.routes'));
 router.use('/configuracion', require('./configuracion.routes'));
 router.use('/encuestas', require('./encuestas.routes'));
+router.use('/poblacion', require('./poblacion.routes'));
 
 
 module.exports = router;

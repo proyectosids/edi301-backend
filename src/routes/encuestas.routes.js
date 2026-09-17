@@ -13,4 +13,9 @@ router.patch('/:id/cerrar', auth, allow('Admin'), C.close);
 router.delete('/:id', auth, allow('Admin'), C.remove);
 router.post('/:id/respuestas', auth, validate(M.submitRespuesta), C.submit);
 router.get('/:id/resultados', auth, allow('Admin'), C.results);
+
+// Muestreo aleatorio. Solo Admin: define quien participa en el estudio.
+router.post('/:id/muestra',   auth, allow('Admin'), validate(M.sortearMuestra), C.sortear);
+router.get('/:id/muestra',    auth, allow('Admin'), C.verMuestra);
+router.delete('/:id/muestra', auth, allow('Admin'), C.quitarMuestra);
 module.exports = router;

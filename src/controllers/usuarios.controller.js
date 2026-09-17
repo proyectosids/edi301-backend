@@ -1,4 +1,13 @@
-const { getImagenCumpleanos, setImagenCumpleanos } = require('../services/birthday.service');
+const {
+  getBirthdayConfig,
+  setBirthdayConfig,
+  renderPlantilla,
+  MAX_TITULO,
+  MAX_MENSAJE,
+  DEFAULT_TITULO,
+  DEFAULT_MENSAJE,
+  VARIABLES,
+} = require('../services/birthdayConfig');
 const { sql, queryP } = require('../dataBase/dbConnection');
 const { createUserSchema, updateUserSchema } = require('../models/usuario.model');
 const { hashPassword } = require('../utils/hash');
@@ -537,15 +546,84 @@ function formatSpanishName(text) {
     })
     .join(' ');
 }
-exports.getImagenCumpleanos = (req, res) => {
-  ok(res, { imagen: getImagenCumpleanos() });
+// ── Configuracion de las felicitaciones de cumpleaños ──────────────────
+// Todo esto se guarda en EDI.App_Config, no en memoria: antes la URL de la
+// imagen se perdia en cada reinicio del contenedor.
+
+/** Ejemplo con un nombre de muestra, para la vista previa del panel. */
+function _previewDe(config) {
+  const demo = { nombre: 'Ana', apellido: 'Ram\u00edrez' };
+  return {
+    titulo: renderPlantilla(config.titulo, demo),
+    mensaje: renderPlantilla(config.mensaje, demo),
+  };
+}
+
+exports.getBirthdayConfig = async (_req, res) => {
+  try {
+    const config = await getBirthdayConfig();
+    ok(res, {
+      ...config,
+      preview: _previewDe(config),
+      limites: { titulo: MAX_TITULO, mensaje: MAX_MENSAJE },
+      predeterminados: { titulo: DEFAULT_TITULO, mensaje: DEFAULT_MENSAJE },
+      variables: VARIABLES,
+    });
+  } catch (e) {
+    fail(res, e);
+  }
 };
 
-exports.setImagenCumpleanos = (req, res) => {
-  const { imagen_url } = req.body;
-  if (!imagen_url) return bad(res, 'imagen_url es requerida');
-  setImagenCumpleanos(imagen_url);
-  ok(res, { ok: true, imagen: getImagenCumpleanos() });
+exports.updateBirthdayConfig = async (req, res) => {
+  try {
+    const cambios = {};
+    for (const campo of ['titulo', 'mensaje', 'imagen_url']) {
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, campo)) {
+        cambios[campo] = req.body[campo];
+      }
+    }
+    const config = await setBirthdayConfig(cambios);
+    ok(res, { ok: true, ...config, preview: _previewDe(config) });
+  } catch (e) {
+    // setBirthdayConfig lanza Error con texto presentable para el usuario.
+    if (e instanceof Error && e.message) return bad(res, e.message);
+    fail(res, e);
+  }
+};
+
+/** Quita la imagen: a partir de aqui las felicitaciones salen solo con texto. */
+exports.deleteImagenCumpleanos = async (_req, res) => {
+  try {
+    const config = await setBirthdayConfig({ imagen_url: null });
+    ok(res, { ok: true, ...config });
+  } catch (e) {
+    fail(res, e);
+  }
+};
+
+// ── Compatibilidad con las versiones de la app ya instaladas ─────────────
+// Devuelven/aceptan el mismo shape que antes ({ imagen }), pero leyendo y
+// escribiendo la configuracion persistida.
+
+exports.getImagenCumpleanos = async (_req, res) => {
+  try {
+    const { imagen_url } = await getBirthdayConfig();
+    ok(res, { imagen: imagen_url, imagen_url });
+  } catch (e) {
+    fail(res, e);
+  }
+};
+
+exports.setImagenCumpleanos = async (req, res) => {
+  try {
+    const { imagen_url } = req.body || {};
+    if (!imagen_url) return bad(res, 'imagen_url es requerida');
+    const config = await setBirthdayConfig({ imagen_url });
+    ok(res, { ok: true, imagen: config.imagen_url, ...config });
+  } catch (e) {
+    if (e instanceof Error && e.message) return bad(res, e.message);
+    fail(res, e);
+  }
 };
 
 exports.buscarPorIdent = async (req, res) => {

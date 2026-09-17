@@ -14,8 +14,17 @@ router.get('/familias/by-doc/search', F.searchByDocument);
 router.put('/update-token', C.updateToken);
 // Rutas específicas ANTES de /:id para evitar conflictos
 router.get('/cumpleanos',         C.getBirthdays);
-router.get('/cumpleanos/imagen',   C.getImagenCumpleanos);
-router.put('/cumpleanos/imagen',   auth, C.setImagenCumpleanos);
+
+// Configuracion de las felicitaciones (imagen + titulo + mensaje).
+// Se guarda en EDI.App_Config, asi que sobrevive a reinicios y redeploys.
+router.get('/cumpleanos/config',    auth, C.getBirthdayConfig);
+router.put('/cumpleanos/config',    auth, C.updateBirthdayConfig);
+
+// Rutas historicas: las versiones de la app ya instaladas siguen usandolas.
+router.get('/cumpleanos/imagen',    C.getImagenCumpleanos);
+router.put('/cumpleanos/imagen',    auth, C.setImagenCumpleanos);
+router.delete('/cumpleanos/imagen', auth, C.deleteImagenCumpleanos);
+
 router.post('/cumpleanos/imagen',  auth, async (req, res) => {
   try {
     if (!req.files || !req.files.imagen) {
@@ -29,9 +38,11 @@ router.post('/cumpleanos/imagen',  auth, async (req, res) => {
       maxH: 800,
       quality: 80,
     });
-    const { setImagenCumpleanos } = require('../services/birthday.service');
-    setImagenCumpleanos(url);
-    res.json({ ok: true, url, imagen: url });
+    // Persistir la URL es el paso que antes faltaba: la subida a Cloudinary
+    // siempre funciono, pero la referencia se guardaba en memoria y se perdia.
+    const { setBirthdayConfig } = require('../services/birthdayConfig');
+    const config = await setBirthdayConfig({ imagen_url: url });
+    res.json({ ok: true, url, imagen: config.imagen_url, ...config });
   } catch (e) {
     console.error('Error subiendo imagen cumpleaños:', e);
     res.status(500).json({ error: e.message });
